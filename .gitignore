@@ -1,3 +1,9 @@
+# app
+.my-mcp/
+
+# MacOS
+.DS_Store
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -208,3 +214,7 @@ __marimo__/
 
 # Project-specific settings
 settings.yaml
+
+# Test reports
+reports/
+.test_results/
