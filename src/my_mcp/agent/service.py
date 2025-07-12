@@ -1,38 +1,37 @@
 """
-LangGraph를 사용한 챗봇 서비스
+LangGraph를 사용한 AI 에이전트 서비스
 """
-import asyncio
 from typing import Dict, Any, List, Optional
 from langchain_openai import ChatOpenAI
 from langchain.schema import HumanMessage, AIMessage, SystemMessage
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 from typing_extensions import Annotated, TypedDict
-from .logging import get_logger
+from ..logging import get_logger
 
 # 서비스 전용 로거 생성
-logger = get_logger("my_mcp.service")
+logger = get_logger("my_mcp.agent.service")
 
-class ChatState(TypedDict):
-    """채팅 상태를 나타내는 타입"""
+class AgentState(TypedDict):
+    """에이전트 상태를 나타내는 타입"""
     messages: Annotated[List[Any], add_messages]
     system_prompt: str
     user_input: str
     ai_response: str
 
-class ChatbotService:
-    """LangGraph 기반 챗봇 서비스"""
+class AgentService:
+    """LangGraph 기반 AI 에이전트 서비스"""
     
-    def __init__(self, openai_config: Dict[str, Any], chatbot_config: Dict[str, Any]):
+    def __init__(self, openai_config: Dict[str, Any], agent_config: Dict[str, Any]):
         """
-        챗봇 서비스 초기화
+        AI 에이전트 서비스 초기화
         
         Args:
             openai_config: OpenAI API 설정
-            chatbot_config: 챗봇 설정
+            agent_config: 에이전트 설정
         """
         self.openai_config = openai_config
-        self.chatbot_config = chatbot_config
+        self.agent_config = agent_config
         self.llm = ChatOpenAI(
             api_key=openai_config["api_key"],
             model=openai_config["model"],
@@ -46,14 +45,14 @@ class ChatbotService:
         self.app = self.workflow.compile()
         
         # 시스템 프롬프트 설정
-        self.system_prompt = chatbot_config["system_prompt"]
+        self.system_prompt = agent_config["system_prompt"]
         
-        logger.info(f"챗봇 서비스 초기화 완료: {chatbot_config['name']}")
+        logger.info(f"AI 에이전트 서비스 초기화 완료: {agent_config['name']}")
     
     def _create_workflow(self) -> StateGraph:
         """LangGraph 워크플로우 생성"""
         # 상태 그래프 생성
-        workflow = StateGraph(ChatState)
+        workflow = StateGraph(AgentState)
         
         # 노드 추가
         workflow.add_node("process_input", self._process_input)
@@ -70,7 +69,7 @@ class ChatbotService:
         
         return workflow
     
-    def _process_input(self, state: ChatState) -> Dict[str, Any]:
+    def _process_input(self, state: AgentState) -> Dict[str, Any]:
         """사용자 입력 처리"""
         user_input = state.get("user_input", "")
         
@@ -92,7 +91,7 @@ class ChatbotService:
             "system_prompt": self.system_prompt
         }
     
-    def _generate_response(self, state: ChatState) -> Dict[str, Any]:
+    def _generate_response(self, state: AgentState) -> Dict[str, Any]:
         """AI 응답 생성"""
         messages = state["messages"]
         
@@ -129,7 +128,7 @@ class ChatbotService:
                 "ai_response": error_message
             }
     
-    def _format_output(self, state: ChatState) -> Dict[str, Any]:
+    def _format_output(self, state: AgentState) -> Dict[str, Any]:
         """출력 포맷팅"""
         ai_response = state["ai_response"]
         
@@ -144,7 +143,7 @@ class ChatbotService:
     
     async def chat(self, user_input: str, conversation_state: Optional[Dict] = None) -> str:
         """
-        사용자 입력에 대한 챗봇 응답 생성
+        사용자 입력에 대한 AI 에이전트 응답 생성
         
         Args:
             user_input: 사용자 입력
@@ -177,7 +176,7 @@ class ChatbotService:
     
     async def chat_stream(self, user_input: str, conversation_state: Optional[Dict] = None):
         """
-        사용자 입력에 대한 챗봇 응답을 스트리밍으로 생성
+        사용자 입력에 대한 AI 에이전트 응답을 스트리밍으로 생성
         
         Args:
             user_input: 사용자 입력
@@ -237,21 +236,21 @@ class ChatbotService:
     
     def get_welcome_message(self) -> str:
         """환영 메시지 반환"""
-        return self.chatbot_config["welcome_message"]
+        return self.agent_config["welcome_message"]
     
-    def get_chatbot_name(self) -> str:
-        """챗봇 이름 반환"""
-        return self.chatbot_config["name"]
+    def get_agent_name(self) -> str:
+        """에이전트 이름 반환"""
+        return self.agent_config["name"]
 
-def create_chatbot_service(openai_config: Dict[str, Any], chatbot_config: Dict[str, Any]) -> ChatbotService:
+def create_agent_service(openai_config: Dict[str, Any], agent_config: Dict[str, Any]) -> AgentService:
     """
-    챗봇 서비스 인스턴스 생성
+    AI 에이전트 서비스 인스턴스 생성
     
     Args:
         openai_config: OpenAI API 설정
-        chatbot_config: 챗봇 설정
+        agent_config: 에이전트 설정
         
     Returns:
-        ChatbotService 인스턴스
+        AgentService 인스턴스
     """
-    return ChatbotService(openai_config, chatbot_config) 
+    return AgentService(openai_config, agent_config) 

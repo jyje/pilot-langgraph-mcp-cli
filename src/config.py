@@ -1,10 +1,15 @@
 """
 Configuration management using Dynaconf
 """
-import os
 from pathlib import Path
 from dynaconf import Dynaconf
 from loguru import logger
+
+# Python 3.12+ 환경에서 내장 tomllib 사용
+try:
+    import tomllib
+except ImportError:
+    tomllib = None
 
 # 프로젝트 루트 경로
 PROJECT_ROOT = Path(__file__).parent.parent
@@ -16,6 +21,28 @@ SETTINGS_FILE = PROJECT_ROOT / "settings.yaml"
 settings = Dynaconf(
     settings_files=[str(SETTINGS_FILE)],
 )
+
+def get_version():
+    """pyproject.toml에서 버전 정보를 읽어옵니다."""
+    try:
+        pyproject_path = PROJECT_ROOT / "pyproject.toml"
+        
+        if not pyproject_path.exists():
+            logger.warning(f"pyproject.toml 파일을 찾을 수 없습니다: {pyproject_path}")
+            return "0.1.0"  # 기본값
+        
+        if tomllib is None:
+            logger.warning("tomllib 모듈을 찾을 수 없습니다. 기본 버전을 사용합니다.")
+            return "0.1.0"
+        
+        with open(pyproject_path, "rb") as f:
+            data = tomllib.load(f)
+            version = data.get("project", {}).get("version", "0.1.0")
+            return version
+    
+    except Exception as e:
+        logger.error(f"버전 정보 읽기 실패: {e}")
+        return "0.1.0"  # 기본값
 
 def get_openai_config():
     """OpenAI API 설정 반환"""

@@ -1,14 +1,11 @@
 """LangGraph 챗봇 CLI 진입점"""
 
 import asyncio
-import sys
 import typer
 from rich.console import Console
 from rich.text import Text
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
-from rich.live import Live
-from rich.markdown import Markdown
 from typing_extensions import Annotated
 from dataclasses import dataclass
 from enum import Enum
@@ -17,9 +14,9 @@ from pathlib import Path
 from loguru import logger
 
 # 프로젝트 모듈 import
-from config import check_settings, get_openai_config, get_chatbot_config
+from config import check_settings, get_openai_config, get_chatbot_config, get_version
 from my_mcp.logging import setup_logging
-from my_mcp.service import create_chatbot_service
+from my_mcp.agent.service import create_agent_service
 
 
 console = Console()
@@ -112,12 +109,12 @@ def export_graph(
             TextColumn("[progress.description]{task.description}"),
             transient=True
         ) as progress:
-            task = progress.add_task("챗봇 서비스 초기화 중...", total=None)
-            chatbot_service = create_chatbot_service(openai_config, chatbot_config)
+            task = progress.add_task("에이전트 서비스 초기화 중...", total=None)
+            agent_service = create_agent_service(openai_config, chatbot_config)
             progress.update(task, completed=100)
         
         # 그래프 구조 가져오기
-        graph = chatbot_service.app.get_graph()
+        graph = agent_service.app.get_graph()
         
         # 그래프에서 실제 노드와 엣지 정보 추출
         try:
@@ -153,7 +150,7 @@ def export_graph(
             # 추출 실패 시 서비스 객체에서 직접 가져오기
             if not nodes:
                 # 워크플로우 객체에서 직접 노드 정보 가져오기
-                workflow = chatbot_service.workflow
+                workflow = agent_service.workflow
                 if hasattr(workflow, 'nodes'):
                     nodes = list(workflow.nodes.keys()) if hasattr(workflow.nodes, 'keys') else []
             
@@ -175,7 +172,7 @@ def export_graph(
                 transient=True
             ) as progress:
                 task = progress.add_task("AI가 그래프 구조 설명을 생성하는 중...", total=None)
-                description = generate_ai_description_sync(chatbot_service, nodes, edges)
+                description = generate_ai_description_sync(agent_service, nodes, edges)
                 progress.update(task, completed=100)
         
         if format.lower() == "mermaid":
@@ -237,7 +234,7 @@ def export_graph(
         console.print(f"[red]그래프 내보내기 실패: {e}[/red]")
         logger.error(f"그래프 내보내기 실패: {e}")
 
-def generate_ai_description_sync(chatbot_service, nodes, edges) -> str:
+def generate_ai_description_sync(agent_service, nodes, edges) -> str:
     """AI를 이용해 그래프 구조 설명을 생성합니다. (동기 버전)"""
     try:
         # 그래프 구조 정보 정리
@@ -274,7 +271,7 @@ def generate_ai_description_sync(chatbot_service, nodes, edges) -> str:
         ]
         
         # LLM 직접 호출
-        response = chatbot_service.llm.invoke(messages)
+        response = agent_service.llm.invoke(messages)
         description = response.content.strip()
         
         return description
@@ -370,20 +367,20 @@ def chat(
         openai_config = get_openai_config()
         chatbot_config = get_chatbot_config()
         
-        # 챗봇 서비스 생성
+        # 에이전트 서비스 생성
         with Progress(
             SpinnerColumn(),
             TextColumn("[progress.description]{task.description}"),
             transient=True
         ) as progress:
-            task = progress.add_task("챗봇 초기화 중...", total=None)
-            chatbot_service = create_chatbot_service(openai_config, chatbot_config)
+            task = progress.add_task("에이전트 초기화 중...", total=None)
+            agent_service = create_agent_service(openai_config, chatbot_config)
             progress.update(task, completed=100)
         
         # 일회성 대화 모드 또는 질문이 제공된 경우
         if once or question:
             # 간단한 환영 메시지 (일회성)
-            console.print(f"[bold blue]🤖 {chatbot_service.get_chatbot_name()}[/bold blue]")
+            console.print(f"[bold blue]🤖 {agent_service.get_agent_name()}[/bold blue]")
             console.print("[dim]일회성 대화 모드입니다.[/dim]")
             console.print()
             
@@ -415,7 +412,7 @@ def chat(
                     nonlocal ai_response
                     try:
                         response_started = False
-                        async for chunk in chatbot_service.chat_stream(user_input, conversation_state):
+                        async for chunk in agent_service.chat_stream(user_input, conversation_state):
                             if not response_started:
                                 response_started = True
                             console.print(chunk, end="", style="white")
@@ -439,7 +436,7 @@ def chat(
                     task = progress.add_task("AI가 답변을 생성하는 중...", total=None)
                     
                     # 비동기 호출을 동기적으로 실행
-                    ai_response = asyncio.run(chatbot_service.chat(user_input, conversation_state))
+                    ai_response = asyncio.run(agent_service.chat(user_input, conversation_state))
                     progress.update(task, completed=100)
                 
                 # AI 응답 표시
@@ -463,8 +460,8 @@ def chat(
         # 기존 연속 대화 모드
         # 환영 메시지 표시
         welcome_panel = Panel(
-            chatbot_service.get_welcome_message(),
-            title=f"🤖 {chatbot_service.get_chatbot_name()}",
+            agent_service.get_welcome_message(),
+            title=f"🤖 {agent_service.get_agent_name()}",
             border_style="blue"
         )
         console.print(welcome_panel)
@@ -504,7 +501,7 @@ def chat(
                         nonlocal ai_response
                         try:
                             response_started = False
-                            async for chunk in chatbot_service.chat_stream(user_input, conversation_state):
+                            async for chunk in agent_service.chat_stream(user_input, conversation_state):
                                 if not response_started:
                                     response_started = True
                                 console.print(chunk, end="", style="white")
@@ -528,7 +525,7 @@ def chat(
                         task = progress.add_task("AI가 답변을 생성하는 중...", total=None)
                         
                         # 비동기 호출을 동기적으로 실행
-                        ai_response = asyncio.run(chatbot_service.chat(user_input, conversation_state))
+                        ai_response = asyncio.run(agent_service.chat(user_input, conversation_state))
                         progress.update(task, completed=100)
                     
                     # AI 응답 표시
@@ -557,8 +554,8 @@ def chat(
             save_conversation_to_markdown(conversation_log, save)
                 
     except Exception as e:
-        console.print(f"[red]챗봇 초기화 실패: {e}[/red]")
-        logger.error(f"챗봇 초기화 실패: {e}")
+        console.print(f"[red]에이전트 초기화 실패: {e}[/red]")
+        logger.error(f"에이전트 초기화 실패: {e}")
 
 
 def save_conversation_to_markdown(conversation_log: list, filename: str):
@@ -592,20 +589,21 @@ def save_conversation_to_markdown(conversation_log: list, filename: str):
 def info():
     """LangGraph 챗봇 정보를 출력합니다."""
     options = state["options"]
+    version = get_version()
     if options and options.output_format == OutputFormat.json:
         data = {
             "name": "LangGraph 챗봇",
-            "version": "0.1.0",
+            "version": version,
             "description": "OpenAI API를 이용한 LangGraph 기반 챗봇 CLI 도구입니다."
         }
         console.print(json.dumps(data, ensure_ascii=False, indent=2))
     elif options and options.output_format == OutputFormat.yaml:
         console.print("name: LangGraph 챗봇")
-        console.print("version: 0.1.0")
+        console.print(f"version: {version}")
         console.print("description: OpenAI API를 이용한 LangGraph 기반 챗봇 CLI 도구입니다.")
     else:
         console.print("[bold blue]🤖 LangGraph 챗봇[/bold blue]")
-        console.print("버전: 0.1.0")
+        console.print(f"버전: {version}")
         console.print("OpenAI API를 이용한 LangGraph 기반 챗봇 CLI 도구입니다.")
 
     if options and options.verbose:
@@ -614,7 +612,8 @@ def info():
 @app.command()
 def version():
     """버전 정보를 출력합니다."""
-    message = "LangGraph 챗봇 v0.1.0"
+    version = get_version()
+    message = f"LangGraph 챗봇 v{version}"
     output_result(message)
 
 
