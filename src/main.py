@@ -16,8 +16,8 @@ from my_mcp.commands import ChatCommand, InfoCommand, SetupCommand, ExportComman
 state = {"options": None}
 
 # Agent 하위 커맨드 그룹 생성
-agent_app = typer.Typer(help="LangGraph 에이전트 관리 명령어")
-app = typer.Typer(help="OpenAI API 기반 LangGraph 챗봇 CLI")
+agent_app = typer.Typer(help="LangGraph 에이전트 관리 명령어", rich_markup_mode="markdown")
+app = typer.Typer(help="OpenAI API 기반 LangGraph 챗봇 CLI", rich_markup_mode="markdown")
 
 # Agent 하위 커맨드 그룹을 메인 앱에 추가
 app.add_typer(agent_app, name="agent")
@@ -70,12 +70,24 @@ def main_callback(
 
 @app.command()
 def chat(
-    question: Annotated[str, typer.Argument(help="질문 내용 (일회성 대화 시 사용)")] = None,
-    once: Annotated[bool, typer.Option("--once", help="일회성 대화 모드 (한 번만 질문/답변 후 종료)")] = False,
+    question: Annotated[str, typer.Argument(help="질문 내용 (제공 시 자동으로 일회성 대화 모드로 실행)")] = None,
+    once: Annotated[bool, typer.Option("--once", help="일회성 대화 모드 (질문 입력 후 바로 종료)")] = False,
     no_stream: Annotated[bool, typer.Option("--no-stream", help="스트리밍 모드 비활성화")] = False,
     save: Annotated[str, typer.Option("--save", help="대화 내용을 마크다운 파일로 저장 (파일명 지정)")] = None
 ):
-    """대화형 챗봇을 시작합니다."""
+    """
+    대화형 챗봇을 시작합니다.
+    
+    ## 사용법
+    
+    * **`my-mcp chat`** → 연속 대화 모드
+    
+    * **`my-mcp chat "질문내용"`** → 일회성 대화 (자동 종료)
+    
+    * **`my-mcp chat --once`** → 일회성 대화 (질문 입력 후 종료)
+    
+    * **`my-mcp chat --once "질문내용"`** → 일회성 대화 (명시적)
+    """
     
     # 설정 파일 확인
     if not check_settings():
