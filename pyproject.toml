@@ -1,16 +1,23 @@
 [project]
 name = "my-mcp"
 version = "0.1.0"
-description = "MCP CLI 도구"
+description = "OpenAI API를 이용한 LangGraph 챗봇 CLI 도구"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "typer>=0.12.0",
     "rich>=13.0.0",
+    "dynaconf>=3.2.0",
+    "openai>=1.10.0",
+    "langgraph>=0.2.0",
+    "langchain>=0.2.0",
+    "langchain-openai>=0.1.0",
+    "pydantic>=2.0.0",
+    "loguru>=0.7.0",
 ]
 
 [project.scripts]
-my-mcp = "my_mcp.cli:main"
+my-mcp = "main:main"
 
 [build-system]
 requires = ["hatchling"]

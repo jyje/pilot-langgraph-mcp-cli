@@ -1,0 +1,33 @@
+# LangGraph 챗봇 설정 템플릿
+# 이 파일을 settings.yaml로 복사하여 실제 API 키를 입력하세요
+
+# OpenAI API 설정
+openai:
+  api_key: "your-openai-api-key-here"
+  model: "gpt-4o-mini"
+  temperature: 0.7
+  max_tokens: 1000
+  streaming: true  # 스트리밍 모드 활성화
+
+# 챗봇 설정
+chatbot:
+  name: "LangGraph Assistant"
+  welcome_message: "안녕하세요! LangGraph 챗봇입니다. 무엇을 도와드릴까요?"
+  system_prompt: "당신은 도움이 되는 AI 어시스턴트입니다. 친절하고 정확한 답변을 제공해주세요."
+
+  # 로깅 설정 (loguru)
+  logging:
+    level: "INFO"  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+    format: "\n<green>{time:HH:mm:ss}</green> | <level>{level: <5}</level> | <cyan>{name}</cyan> - <level>{message}</level>"
+    file_enabled: false  # 파일 로깅 활성화 여부
+  file_path: "logs/app.log"  # 로그 파일 경로
+  rotation: "10 MB"  # 로그 파일 크기 제한
+  retention: "10 days"  # 로그 파일 보관 기간
+  compression: "zip"  # 로그 파일 압축 방식
+  backtrace: true  # 에러 추적 활성화
+  diagnose: true  # 상세 진단 정보 포함
+
+# 개발 모드 설정
+development:
+  debug: false
+  verbose: false
