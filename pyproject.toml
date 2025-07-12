@@ -1,0 +1,23 @@
+[project]
+name = "my-mcp"
+version = "0.1.0"
+description = "MCP CLI 도구"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "typer>=0.12.0",
+    "rich>=13.0.0",
+]
+
+[project.scripts]
+my-mcp = "my_mcp.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/my_mcp"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
