@@ -243,39 +243,12 @@ def generate_ai_description_sync(chatbot_service, nodes, edges) -> str:
         # 그래프 구조 정보 정리
         node_info = []
         for node in nodes:
-            if node == "__start__":
-                node_info.append("시작점")
-            elif node == "__end__":
-                node_info.append("종료점")
-            elif node == "process_input":
-                node_info.append("입력 처리 단계")
-            elif node == "generate_response":
-                node_info.append("응답 생성 단계")
-            elif node == "format_output":
-                node_info.append("출력 포맷팅 단계")
-            else:
-                node_info.append(f"{node} 단계")
+            node_info.append(f"{node}")
         
         edge_info = []
         for edge in edges:
             if isinstance(edge, (list, tuple)) and len(edge) >= 2:
-                source_name = {
-                    "__start__": "시작점",
-                    "process_input": "입력 처리",
-                    "generate_response": "응답 생성",
-                    "format_output": "출력 포맷팅",
-                    "__end__": "종료점"
-                }.get(edge[0], edge[0])
-                
-                target_name = {
-                    "__start__": "시작점",
-                    "process_input": "입력 처리",
-                    "generate_response": "응답 생성",
-                    "format_output": "출력 포맷팅",
-                    "__end__": "종료점"
-                }.get(edge[1], edge[1])
-                
-                edge_info.append(f"{source_name} → {target_name}")
+                edge_info.append(f"{edge[0]} → {edge[1]}")
         
         # AI에게 설명 생성 요청
         prompt = f"""다음 LangGraph 워크플로우에 대한 간단하고 명확한 설명을 한국어로 작성해주세요:
@@ -321,26 +294,13 @@ def generate_mermaid_diagram(nodes, edges, description=None, for_console=False) 
         
         # 노드 정의
         for node in nodes:
-            if node == "__start__":
-                mermaid_lines.append(f'    START([\"시작\"])')
-            elif node == "__end__":
-                mermaid_lines.append(f'    END([\"종료\"])')
-            else:
-                # 노드 이름을 한글로 변환
-                node_label = {
-                    "process_input": "입력 처리",
-                    "generate_response": "응답 생성", 
-                    "format_output": "출력 포맷팅"
-                }.get(node, node)
-                mermaid_lines.append(f'    {node}[\"{node_label}\"]')
+            mermaid_lines.append(f'    {node}[\"{node}\"]')
         
-        # 엣지 정의
+        # 엣지 정의 (원본 이름 그대로 사용)
         for edge in edges:
             if isinstance(edge, (list, tuple)) and len(edge) >= 2:
                 source, target = edge[0], edge[1]
-                source_name = "START" if source == "__start__" else source
-                target_name = "END" if target == "__end__" else target
-                mermaid_lines.append(f"    {source_name} --> {target_name}")
+                mermaid_lines.append(f"    {source} --> {target}")
         
         # 스타일 추가 (글씨 검은색으로)
         mermaid_lines.extend([
@@ -350,7 +310,7 @@ def generate_mermaid_diagram(nodes, edges, description=None, for_console=False) 
             "    classDef generate fill:#e8f5e8,stroke:#1b5e20,stroke-width:2px,color:#000;",
             "    classDef format fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000;",
             "",
-            "    class START,END startEnd",
+            "    class __start__,__end__ startEnd",
             "    class process_input process",
             "    class generate_response generate", 
             "    class format_output format"
