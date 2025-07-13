@@ -52,10 +52,10 @@ class AgentService:
         # LLM에 도구 바인딩
         if self.tools:
             self.llm_with_tools = self.llm.bind_tools(self.tools)
-            logger.info(f"도구 바인딩 완료: {len(self.tools)}개 도구")
+            logger.debug(f"도구 바인딩 완료: {len(self.tools)}개 도구")
         else:
             self.llm_with_tools = self.llm
-            logger.info("사용 가능한 도구가 없습니다")
+            logger.debug("사용 가능한 도구가 없습니다")
         
         # 도구 노드 생성
         self.tool_node = ToolNode(self.tools) if self.tools else None
@@ -67,7 +67,7 @@ class AgentService:
         # 시스템 프롬프트 설정
         self.system_prompt = agent_config["system_prompt"]
         
-        logger.info(f"AI 에이전트 서비스 초기화 완료: {agent_config['name']}")
+        logger.debug(f"AI 에이전트 서비스 초기화 완료: {agent_config['name']}")
     
     def _create_workflow(self) -> StateGraph:
         """LangGraph 워크플로우 생성"""

@@ -87,7 +87,7 @@ def check_settings():
             logger.info("settings.yaml에서 openai.api_key를 설정하세요.")
             return False
         
-        logger.success("설정 파일 검증 완료")
+        logger.debug("설정 파일 검증 완료")
         return True
     except Exception as e:
         logger.error(f"설정 파일 읽기 오류: {e}")

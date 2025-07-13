@@ -32,7 +32,7 @@ class ToolRegistry:
             self._tool_status[tool_name] = enabled
             self._tool_descriptions[tool_name] = tool.description
             
-            logger.info(f"도구 등록: {tool_name} (활성화: {enabled})")
+            logger.debug(f"도구 등록: {tool_name} (활성화: {enabled})")
             
         except Exception as e:
             logger.error(f"도구 등록 실패: {e}")
@@ -101,7 +101,7 @@ class ToolRegistry:
         """
         if tool_name in self._tools:
             self._tool_status[tool_name] = True
-            logger.info(f"도구 활성화: {tool_name}")
+            logger.debug(f"도구 활성화: {tool_name}")
             return True
         return False
     
@@ -117,7 +117,7 @@ class ToolRegistry:
         """
         if tool_name in self._tools:
             self._tool_status[tool_name] = False
-            logger.info(f"도구 비활성화: {tool_name}")
+            logger.debug(f"도구 비활성화: {tool_name}")
             return True
         return False
     
@@ -166,7 +166,7 @@ def _initialize_default_tools():
         # 시간 도구 등록
         registry.register_tool(get_current_time, enabled=True)
         
-        logger.info("기본 도구들이 레지스트리에 등록되었습니다.")
+        logger.debug("기본 도구들이 레지스트리에 등록되었습니다.")
         
     except Exception as e:
         logger.error(f"기본 도구 초기화 실패: {e}") 
