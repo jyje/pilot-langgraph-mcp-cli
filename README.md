@@ -1,12 +1,15 @@
 # pilot-langgraph-mcp-cli
 
-A LangGraph-based chatbot CLI tool using OpenAI API.
+A LangGraph-based chatbot CLI tool using OpenAI API with MCP (Model Context Protocol) support.
 
 ## Key Features
 
 - **Interactive Chatbot**: Real-time conversation with AI
 - **Streaming Response**: Real-time response output
-- **Workflow Visualization**: Export LangGraph workflow as Mermaid diagrams
+- **MCP Server Support**: Extensible tool system via Model Context Protocol
+- **Tool Registry System**: Centralized tool management and registration
+- **Enhanced DateTime Tools**: Built-in date/time tools with security validation
+- **Workflow Visualization**: Export LangGraph workflow as Mermaid diagrams with tool information
 - **Configuration Management**: Flexible configuration management
 
 ## Installation & Setup
@@ -44,6 +47,11 @@ openai:
   temperature: 0.7
   max_tokens: 1000
   streaming: true
+
+# Optional MCP server configuration
+mcp:
+  servers:
+    # Add your MCP servers here
 ```
 
 ## Usage
@@ -70,7 +78,7 @@ my-mcp chat --save
 # Export graph structure as Mermaid diagram
 my-mcp agent export
 
-# Include AI auto-description
+# Include AI auto-description with tool information
 my-mcp agent export --ai-description
 
 # Export as JSON format
@@ -100,9 +108,23 @@ pilot-langgraph-mcp-cli/
 │   └── my_mcp/
 │       ├── __init__.py
 │       ├── logging.py         # Logging configuration
-│       └── agent/
+│       ├── agent/
+│       │   ├── __init__.py
+│       │   └── service.py     # LangGraph chatbot service
+│       ├── mcp/               # MCP (Model Context Protocol) support
+│       │   ├── __init__.py
+│       │   ├── client.py      # MCP client implementation
+│       │   ├── registry.py    # MCP server registry
+│       │   └── server.py      # MCP server interface
+│       ├── tools/             # Tool system
+│       │   ├── __init__.py
+│       │   ├── datetime_tools.py  # Enhanced datetime tools
+│       │   └── registry.py    # Tool registry management
+│       └── utils/
 │           ├── __init__.py
-│           └── service.py     # LangGraph chatbot service
+│           ├── diagram_utils.py   # Workflow visualization with tool support
+│           ├── markdown_utils.py
+│           └── output_utils.py
 ├── settings.sample.yaml       # Configuration template
 ├── settings.yaml             # Actual configuration
 ├── pyproject.toml            # Project configuration
@@ -119,7 +141,11 @@ pilot-langgraph-mcp-cli/
 - `openai`: OpenAI API client
 - `langgraph`: LangGraph workflow
 - `langchain`: LangChain framework
+- `langchain-mcp-adapters`: MCP integration for LangChain
+- `mcp`: Model Context Protocol implementation
+- `httpx`: HTTP client for MCP communication
 - `loguru`: Logging library
+- `jsonschema`: JSON schema validation
 
 ### Logging Configuration
 
