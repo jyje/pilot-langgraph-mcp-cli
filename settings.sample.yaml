@@ -27,6 +27,22 @@ chatbot:
   backtrace: true  # 에러 추적 활성화
   diagnose: true  # 상세 진단 정보 포함
 
+# MCP 서버 설정 (HTTP 방식)
+mcp_servers:
+  - name: "example-server"
+    url: "http://localhost:8000/mcp"
+    enabled: true
+    timeout: 30
+    headers:
+      Authorization: "Bearer your-token-here"
+      Content-Type: "application/json"
+  # - name: "another-server"
+  #   url: "http://localhost:8001"
+  #   enabled: false
+  #   timeout: 60
+  #   headers:
+  #     X-API-Key: "your-api-key"
+
 # 개발 모드 설정
 development:
   debug: false

@@ -6,7 +6,7 @@ from typing_extensions import Annotated
 from pathlib import Path
 
 # 프로젝트 모듈 import
-from config import check_settings, get_openai_config, get_chatbot_config, get_version
+from my_mcp.config import check_settings, get_openai_config, get_chatbot_config, get_version, get_mcp_servers
 from my_mcp.logging import setup_logging
 from my_mcp.utils import OutputFormat, CommonOptions, output_result
 from my_mcp.commands import ChatCommand, InfoCommand, SetupCommand, ExportCommand
@@ -40,9 +40,10 @@ def export_graph(
         # 설정 로드
         openai_config = get_openai_config()
         chatbot_config = get_chatbot_config()
+        mcp_servers = get_mcp_servers()
         
         # 내보내기 명령어 실행
-        export_command = ExportCommand(openai_config, chatbot_config)
+        export_command = ExportCommand(openai_config, chatbot_config, mcp_servers)
         export_command.execute(format, output, ai_description)
         
     except Exception as e:
@@ -98,9 +99,10 @@ def chat(
         # 설정 로드
         openai_config = get_openai_config()
         chatbot_config = get_chatbot_config()
+        mcp_servers = get_mcp_servers()
         
         # 채팅 명령어 실행
-        chat_command = ChatCommand(openai_config, chatbot_config)
+        chat_command = ChatCommand(openai_config, chatbot_config, mcp_servers)
         
         # 일회성 대화 모드 또는 질문이 제공된 경우
         if once or question:

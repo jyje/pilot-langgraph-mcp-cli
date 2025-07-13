@@ -11,6 +11,7 @@ from langgraph.prebuilt import ToolNode
 from typing_extensions import Annotated, TypedDict
 from ..logging import get_logger
 from ..tools import get_tool_registry
+from ..mcp import mcp_registry, mcp_client_manager
 
 # 서비스 전용 로거 생성
 logger = get_logger("my_mcp.agent.service")
@@ -25,16 +26,21 @@ class AgentState(TypedDict):
 class AgentService:
     """LangGraph 기반 AI 에이전트 서비스"""
     
-    def __init__(self, openai_config: Dict[str, Any], agent_config: Dict[str, Any]):
+    def __init__(self, openai_config: Dict[str, Any], agent_config: Dict[str, Any], mcp_servers: List[Dict[str, Any]] = None):
         """
         AI 에이전트 서비스 초기화
         
         Args:
             openai_config: OpenAI API 설정
             agent_config: 에이전트 설정
+            mcp_servers: MCP 서버 설정 목록
         """
         self.openai_config = openai_config
         self.agent_config = agent_config
+        
+        # MCP 서버 초기화
+        self.mcp_servers = mcp_servers or []
+        self._initialize_mcp_servers()
         
         # 도구 레지스트리 초기화
         self.tool_registry = get_tool_registry()
@@ -68,6 +74,80 @@ class AgentService:
         self.system_prompt = agent_config["system_prompt"]
         
         logger.debug(f"AI 에이전트 서비스 초기화 완료: {agent_config['name']}")
+    
+    def _initialize_mcp_servers(self) -> None:
+        """MCP 서버 초기화"""
+        if not self.mcp_servers:
+            logger.debug("MCP 서버 설정이 없습니다")
+            return
+            
+        try:
+            # MCP 레지스트리에 서버 로드
+            mcp_registry.load_from_config(self.mcp_servers)
+            
+            # 공식 MCP 관리자에 서버 설정
+            servers = mcp_registry.get_enabled_servers()
+            mcp_client_manager.set_servers(servers)
+            
+            logger.info(f"MCP 서버 초기화 완료: {len(self.mcp_servers)}개 서버")
+            
+        except Exception as e:
+            logger.error(f"MCP 서버 초기화 실패: {e}")
+    
+    async def connect_mcp_servers(self) -> Dict[str, bool]:
+        """MCP 서버들에 연결"""
+        try:
+            # 공식 MCP 관리자 초기화
+            success = await mcp_client_manager.initialize()
+            
+            if success:
+                # MCP 도구 통합
+                await self._integrate_mcp_tools()
+                
+                # 연결 성공한 서버 목록
+                servers = mcp_registry.get_enabled_servers()
+                connection_results = {server.name: True for server in servers}
+                logger.info(f"MCP 서버 연결 성공: {len(servers)}개 서버")
+                
+                return connection_results
+            else:
+                logger.error("MCP 서버 연결 실패")
+                return {}
+                
+        except Exception as e:
+            logger.error(f"MCP 서버 연결 오류: {e}")
+            return {}
+    
+    async def _integrate_mcp_tools(self) -> None:
+        """MCP 도구를 기존 도구 목록에 통합"""
+        try:
+            # 공식 라이브러리에서 도구 가져오기
+            mcp_tools = mcp_client_manager.get_tools()
+            
+            if mcp_tools:
+                # 기존 도구와 MCP 도구를 합치기
+                combined_tools = list(self.tools) + mcp_tools
+                self.tools = combined_tools
+                
+                # LLM에 다시 바인딩
+                self.llm_with_tools = self.llm.bind_tools(self.tools)
+                
+                # 도구 노드 다시 생성
+                self.tool_node = ToolNode(self.tools)
+                
+                # 워크플로우 재생성
+                self.workflow = self._create_workflow()
+                self.app = self.workflow.compile()
+                
+                logger.info(f"MCP 도구 통합 완료: {len(mcp_tools)}개 도구 추가")
+                
+        except Exception as e:
+            logger.error(f"MCP 도구 통합 오류: {e}")
+    
+    async def disconnect_mcp_servers(self) -> None:
+        """MCP 서버들 연결 해제"""
+        await mcp_client_manager.close()
+        logger.info("모든 MCP 서버 연결 해제 완료")
     
     def _create_workflow(self) -> StateGraph:
         """LangGraph 워크플로우 생성"""
@@ -260,20 +340,24 @@ class AgentService:
     
     def get_tool_info(self) -> Dict[str, Any]:
         """도구 정보 반환"""
-        return {
+        tool_info = {
             "tools": self.tool_registry.get_tool_info(),
-            "tool_count": self.tool_registry.get_tool_count()
+            "count": self.tool_registry.get_tool_count(),
+            "mcp_tools": mcp_client_manager.get_tool_info(),
+            "mcp_servers": [server.to_dict() for server in mcp_registry.get_all_servers()]
         }
+        return tool_info
 
-def create_agent_service(openai_config: Dict[str, Any], agent_config: Dict[str, Any]) -> AgentService:
+def create_agent_service(openai_config: Dict[str, Any], agent_config: Dict[str, Any], mcp_servers: List[Dict[str, Any]] = None) -> AgentService:
     """
     AI 에이전트 서비스 인스턴스 생성
     
     Args:
         openai_config: OpenAI API 설정
         agent_config: 에이전트 설정
+        mcp_servers: MCP 서버 설정 목록
         
     Returns:
         AgentService 인스턴스
     """
-    return AgentService(openai_config, agent_config) 
+    return AgentService(openai_config, agent_config, mcp_servers) 

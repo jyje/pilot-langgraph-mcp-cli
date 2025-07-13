@@ -18,16 +18,18 @@ logger = get_logger("my_mcp.commands.export")
 class ExportCommand:
     """그래프 내보내기 명령어 처리 클래스"""
     
-    def __init__(self, openai_config: dict, chatbot_config: dict):
+    def __init__(self, openai_config: dict, chatbot_config: dict, mcp_servers: list = None):
         """
         그래프 내보내기 명령어 초기화
         
         Args:
             openai_config: OpenAI 설정
             chatbot_config: 챗봇 설정
+            mcp_servers: MCP 서버 설정 목록
         """
         self.openai_config = openai_config
         self.chatbot_config = chatbot_config
+        self.mcp_servers = mcp_servers or []
     
     def execute(self, format: str = "mermaid", output: str = None, ai_description: bool = False):
         """
@@ -58,7 +60,14 @@ class ExportCommand:
                 transient=True
             ) as progress:
                 task = progress.add_task("에이전트 서비스 초기화 중...", total=None)
-                agent_service = create_agent_service(self.openai_config, self.chatbot_config)
+                agent_service = create_agent_service(self.openai_config, self.chatbot_config, self.mcp_servers)
+                
+                # MCP 서버 연결 (비동기)
+                import asyncio
+                if self.mcp_servers:
+                    connection_results = asyncio.run(agent_service.connect_mcp_servers())
+                    logger.debug(f"MCP 서버 연결 결과: {connection_results}")
+                
                 progress.update(task, completed=100)
             
             # 성공 메시지 출력
@@ -144,18 +153,45 @@ class ExportCommand:
                 if hasattr(workflow, 'nodes'):
                     nodes = list(workflow.nodes.keys()) if hasattr(workflow.nodes, 'keys') else []
             
+            # __start__와 __end__ 노드 명시적 추가
+            if "__start__" not in nodes:
+                nodes.insert(0, "__start__")
+            if "__end__" not in nodes:
+                nodes.append("__end__")
+            
             # 그래프 정보가 없으면 오류 발생
             if not nodes or not edges:
                 raise ValueError("그래프 구조 정보를 추출할 수 없습니다.")
             
-            # 도구 정보 추출
+            # 모든 도구 정보 추출 (기본 도구 + MCP 도구)
             tools = []
-            if hasattr(agent_service, 'tools') and agent_service.tools:
-                for tool in agent_service.tools:
+            
+            # 기본 도구 정보 추출
+            if hasattr(agent_service, 'tool_registry') and agent_service.tool_registry:
+                basic_tools = agent_service.tool_registry.get_tool_info()
+                logger.debug(f"기본 도구 개수: {len(basic_tools)}")
+                for tool in basic_tools:
+                    logger.debug(f"기본 도구: {tool['name']}")
                     tools.append({
-                        'name': tool.name,
-                        'description': tool.description
+                        'name': tool['name'],
+                        'description': tool['description'],
+                        'type': 'basic'
                     })
+            
+            # MCP 도구 정보 추출
+            from ..mcp import mcp_client_manager
+            mcp_tools = mcp_client_manager.get_tool_info()
+            logger.debug(f"MCP 도구 개수: {len(mcp_tools)}")
+            for tool_name, tool_info in mcp_tools.items():
+                logger.debug(f"MCP 도구: {tool_name} - {tool_info}")
+                tools.append({
+                    'name': tool_name,
+                    'description': tool_info.get('description', '설명 없음'),
+                    'type': 'mcp',
+                    'server': tool_info.get('server', 'Unknown')
+                })
+            
+            logger.debug(f"총 도구 개수: {len(tools)}")
             
             return nodes, edges, tools
             

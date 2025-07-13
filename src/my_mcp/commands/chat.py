@@ -20,16 +20,18 @@ logger = get_logger("my_mcp.commands.chat")
 class ChatCommand:
     """채팅 명령어 처리 클래스"""
     
-    def __init__(self, openai_config: Dict, chatbot_config: Dict):
+    def __init__(self, openai_config: Dict, chatbot_config: Dict, mcp_servers: list = None):
         """
         채팅 명령어 초기화
         
         Args:
             openai_config: OpenAI 설정
             chatbot_config: 챗봇 설정
+            mcp_servers: MCP 서버 설정 목록
         """
         self.openai_config = openai_config
         self.chatbot_config = chatbot_config
+        self.mcp_servers = mcp_servers or []
         self.agent_service = None
     
     def _get_user_input(self, prompt: str) -> str:
@@ -65,8 +67,18 @@ class ChatCommand:
                 transient=True
             ) as progress:
                 task = progress.add_task("에이전트 초기화 중...", total=None)
-                self.agent_service = create_agent_service(self.openai_config, self.chatbot_config)
+                self.agent_service = create_agent_service(self.openai_config, self.chatbot_config, self.mcp_servers)
                 progress.update(task, completed=100)
+                
+                # MCP 서버 연결 시도
+                if self.mcp_servers:
+                    connection_task = progress.add_task("MCP 서버 연결 중...", total=None)
+                    connection_results = await self.agent_service.connect_mcp_servers()
+                    progress.update(connection_task, completed=100)
+                    
+                    # 연결 결과 로그
+                    connected_count = sum(1 for success in connection_results.values() if success)
+                    logger.info(f"MCP 서버 연결 완료: {connected_count}/{len(self.mcp_servers)}개 성공")
     
     async def execute_once(self, question: str = None, no_stream: bool = False, save: str = None):
         """
