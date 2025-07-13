@@ -18,16 +18,18 @@ logger = get_logger("my_mcp.commands.export")
 class ExportCommand:
     """그래프 내보내기 명령어 처리 클래스"""
     
-    def __init__(self, openai_config: dict, chatbot_config: dict):
+    def __init__(self, openai_config: dict, chatbot_config: dict, mcp_servers: list = None):
         """
         그래프 내보내기 명령어 초기화
         
         Args:
             openai_config: OpenAI 설정
             chatbot_config: 챗봇 설정
+            mcp_servers: MCP 서버 설정 목록
         """
         self.openai_config = openai_config
         self.chatbot_config = chatbot_config
+        self.mcp_servers = mcp_servers or []
     
     def execute(self, format: str = "mermaid", output: str = None, ai_description: bool = False):
         """
@@ -58,11 +60,21 @@ class ExportCommand:
                 transient=True
             ) as progress:
                 task = progress.add_task("에이전트 서비스 초기화 중...", total=None)
-                agent_service = create_agent_service(self.openai_config, self.chatbot_config)
+                agent_service = create_agent_service(self.openai_config, self.chatbot_config, self.mcp_servers)
+                
+                # MCP 서버 연결 (비동기)
+                import asyncio
+                if self.mcp_servers:
+                    connection_results = asyncio.run(agent_service.connect_mcp_servers())
+                    logger.debug(f"MCP 서버 연결 결과: {connection_results}")
+                
                 progress.update(task, completed=100)
             
+            # 성공 메시지 출력
+            logger.debug("✅ 에이전트 서비스 초기화 완료")
+            
             # 그래프 구조 가져오기
-            nodes, edges = self._extract_graph_structure(agent_service)
+            nodes, edges, tools = self._extract_graph_structure(agent_service)
             
             # AI 설명 생성
             description = None
@@ -73,14 +85,17 @@ class ExportCommand:
                     transient=True
                 ) as progress:
                     task = progress.add_task("AI가 그래프 구조 설명을 생성하는 중...", total=None)
-                    description = generate_ai_description_sync(agent_service, nodes, edges)
+                    description = generate_ai_description_sync(agent_service, nodes, edges, tools)
                     progress.update(task, completed=100)
+                
+                # 성공 메시지 출력
+                logger.debug("✅ AI 설명 생성 완료")
             
             # 형식에 따라 내보내기
             if format.lower() == "mermaid":
-                self._export_mermaid(nodes, edges, description, output)
+                self._export_mermaid(nodes, edges, tools, description, output)
             elif format.lower() == "json":
-                self._export_json(nodes, edges, description, output)
+                self._export_json(nodes, edges, tools, description, output)
             else:
                 console.print(f"[red]지원되지 않는 형식입니다: {format}[/red]")
                 console.print("지원되는 형식: mermaid, json")
@@ -97,7 +112,7 @@ class ExportCommand:
             agent_service: 에이전트 서비스
             
         Returns:
-            tuple: (nodes, edges)
+            tuple: (nodes, edges, tools)
         """
         graph = agent_service.app.get_graph()
         
@@ -138,23 +153,60 @@ class ExportCommand:
                 if hasattr(workflow, 'nodes'):
                     nodes = list(workflow.nodes.keys()) if hasattr(workflow.nodes, 'keys') else []
             
+            # __start__와 __end__ 노드 명시적 추가
+            if "__start__" not in nodes:
+                nodes.insert(0, "__start__")
+            if "__end__" not in nodes:
+                nodes.append("__end__")
+            
             # 그래프 정보가 없으면 오류 발생
             if not nodes or not edges:
                 raise ValueError("그래프 구조 정보를 추출할 수 없습니다.")
             
-            return nodes, edges
+            # 모든 도구 정보 추출 (기본 도구 + MCP 도구)
+            tools = []
+            
+            # 기본 도구 정보 추출
+            if hasattr(agent_service, 'tool_registry') and agent_service.tool_registry:
+                basic_tools = agent_service.tool_registry.get_tool_info()
+                logger.debug(f"기본 도구 개수: {len(basic_tools)}")
+                for tool in basic_tools:
+                    logger.debug(f"기본 도구: {tool['name']}")
+                    tools.append({
+                        'name': tool['name'],
+                        'description': tool['description'],
+                        'type': 'basic'
+                    })
+            
+            # MCP 도구 정보 추출
+            from ..mcp import mcp_client_manager
+            mcp_tools = mcp_client_manager.get_tool_info()
+            logger.debug(f"MCP 도구 개수: {len(mcp_tools)}")
+            for tool_name, tool_info in mcp_tools.items():
+                logger.debug(f"MCP 도구: {tool_name} - {tool_info}")
+                tools.append({
+                    'name': tool_name,
+                    'description': tool_info.get('description', '설명 없음'),
+                    'type': 'mcp',
+                    'server': tool_info.get('server', 'Unknown')
+                })
+            
+            logger.debug(f"총 도구 개수: {len(tools)}")
+            
+            return nodes, edges, tools
             
         except Exception as e:
             logger.error(f"그래프 정보 추출 실패: {e}")
             raise ValueError(f"그래프 구조를 추출할 수 없습니다: {e}")
     
-    def _export_mermaid(self, nodes, edges, description, output):
+    def _export_mermaid(self, nodes, edges, tools, description, output):
         """
         Mermaid 형식으로 내보내기
         
         Args:
             nodes: 노드 리스트
             edges: 엣지 리스트
+            tools: 도구 리스트
             description: 설명
             output: 출력 파일 경로
         """
@@ -164,7 +216,7 @@ class ExportCommand:
             output_path.parent.mkdir(parents=True, exist_ok=True)
             
             # 마크다운 코드블럭으로 감싸기
-            mermaid_content = generate_mermaid_diagram(nodes, edges, description, for_console=False)
+            mermaid_content = generate_mermaid_diagram(nodes, edges, tools, description, for_console=False)
             markdown_content = f"""# LangGraph 워크플로우 구조
 
 ```mermaid
@@ -181,13 +233,14 @@ class ExportCommand:
             console.print(f"[red]❌ Mermaid 다이어그램 생성 실패: {e}[/red]")
             logger.error(f"Mermaid 다이어그램 생성 실패: {e}")
     
-    def _export_json(self, nodes, edges, description, output):
+    def _export_json(self, nodes, edges, tools, description, output):
         """
         JSON 형식으로 내보내기
         
         Args:
             nodes: 노드 리스트
             edges: 엣지 리스트
+            tools: 도구 리스트
             description: 설명
             output: 출력 파일 경로
         """
@@ -200,9 +253,20 @@ class ExportCommand:
             node_list = [{"id": node, "type": "node", "label": node} for node in nodes]
             edge_list = [{"source": edge[0], "target": edge[1]} for edge in edges if isinstance(edge, (list, tuple)) and len(edge) >= 2]
             
+            # 도구 정보 추가
+            tool_list = []
+            if tools:
+                for tool in tools:
+                    tool_list.append({
+                        "name": tool["name"],
+                        "description": tool["description"],
+                        "type": "tool"
+                    })
+            
             graph_data = {
                 "nodes": node_list,
                 "edges": edge_list,
+                "tools": tool_list,
                 "workflow": "LangGraph Assistant",
                 "description": description or "입력 처리 → 응답 생성 → 출력 포맷팅 워크플로우"
             }

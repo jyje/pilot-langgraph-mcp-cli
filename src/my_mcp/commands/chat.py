@@ -3,6 +3,7 @@
 """
 
 import asyncio
+import sys
 from typing import Dict, Optional
 from rich.console import Console
 from rich.panel import Panel
@@ -19,17 +20,43 @@ logger = get_logger("my_mcp.commands.chat")
 class ChatCommand:
     """채팅 명령어 처리 클래스"""
     
-    def __init__(self, openai_config: Dict, chatbot_config: Dict):
+    def __init__(self, openai_config: Dict, chatbot_config: Dict, mcp_servers: list = None):
         """
         채팅 명령어 초기화
         
         Args:
             openai_config: OpenAI 설정
             chatbot_config: 챗봇 설정
+            mcp_servers: MCP 서버 설정 목록
         """
         self.openai_config = openai_config
         self.chatbot_config = chatbot_config
+        self.mcp_servers = mcp_servers or []
         self.agent_service = None
+    
+    def _get_user_input(self, prompt: str) -> str:
+        """
+        사용자 입력을 받는 함수
+        파이프 입력인 경우 프롬프트를 표시하지 않지만 입력 내용은 표시함
+        
+        Args:
+            prompt: 터미널에서 표시할 프롬프트
+            
+        Returns:
+            사용자 입력 문자열
+        """
+        if sys.stdin.isatty():
+            # 터미널에서 직접 입력받는 경우
+            return console.input(prompt)
+        else:
+            # 파이프 입력인 경우
+            line = sys.stdin.readline()
+            if not line:
+                raise EOFError()
+            user_input = line.rstrip('\n\r')
+            # 파이프 입력 내용을 화면에 표시 (일관성을 위해 항상 "You:" 사용)
+            console.print(f"[bold green]🧑 You:[/bold green] {user_input}")
+            return user_input
     
     async def _initialize_agent(self):
         """에이전트 서비스 초기화"""
@@ -40,8 +67,18 @@ class ChatCommand:
                 transient=True
             ) as progress:
                 task = progress.add_task("에이전트 초기화 중...", total=None)
-                self.agent_service = create_agent_service(self.openai_config, self.chatbot_config)
+                self.agent_service = create_agent_service(self.openai_config, self.chatbot_config, self.mcp_servers)
                 progress.update(task, completed=100)
+                
+                # MCP 서버 연결 시도
+                if self.mcp_servers:
+                    connection_task = progress.add_task("MCP 서버 연결 중...", total=None)
+                    connection_results = await self.agent_service.connect_mcp_servers()
+                    progress.update(connection_task, completed=100)
+                    
+                    # 연결 결과 로그
+                    connected_count = sum(1 for success in connection_results.values() if success)
+                    logger.info(f"MCP 서버 연결 완료: {connected_count}/{len(self.mcp_servers)}개 성공")
     
     async def execute_once(self, question: str = None, no_stream: bool = False, save: str = None):
         """
@@ -67,7 +104,14 @@ class ChatCommand:
             user_input = question
         else:
             # 사용자 입력 받기
-            user_input = console.input("[bold green]질문:[/bold green] ")
+            try:
+                user_input = self._get_user_input("[bold green]🧑 You:[/bold green] ")
+            except EOFError:
+                logger.debug("EOF 발생으로 일회성 대화 모드 종료")
+                return
+            except KeyboardInterrupt:
+                console.print("\n[yellow]대화가 취소되었습니다.[/yellow]")
+                return
         
         # 빈 입력 처리
         if not user_input.strip():
@@ -120,7 +164,7 @@ class ChatCommand:
         while True:
             try:
                 # 사용자 입력 받기
-                user_input = console.input("[bold green]You:[/bold green] ")
+                user_input = self._get_user_input("[bold green]🧑 You:[/bold green] ")
                 
                 # 종료 명령어 확인
                 if user_input.strip().lower() == "/bye":
@@ -144,9 +188,15 @@ class ChatCommand:
             except KeyboardInterrupt:
                 console.print("\n[yellow]대화를 종료합니다. 안녕히 가세요! 👋[/yellow]")
                 break
+            except EOFError:
+                # EOF 발생 시 조용히 종료
+                logger.debug("EOF 발생 - 연속 대화 모드 종료")
+                break
             except Exception as e:
                 console.print(f"[red]오류가 발생했습니다: {e}[/red]")
                 logger.error(f"채팅 오류: {e}")
+                # 연속적인 오류 방지를 위해 잠시 대기 후 계속
+                continue
         
         # 연속 대화 모드 종료 시 마크다운 저장
         if save and conversation_log:

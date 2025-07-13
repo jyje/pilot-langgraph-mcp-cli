@@ -12,7 +12,7 @@ except ImportError:
     tomllib = None
 
 # 프로젝트 루트 경로
-PROJECT_ROOT = Path(__file__).parent.parent
+PROJECT_ROOT = Path(__file__).parent.parent.parent
 
 # 설정 파일 경로
 SETTINGS_FILE = PROJECT_ROOT / "settings.yaml"
@@ -72,6 +72,48 @@ def is_verbose():
     """상세 모드 여부 확인"""
     return settings.get("development.verbose", False)
 
+def get_mcp_servers():
+    """MCP 서버 설정 반환"""
+    mcp_servers = settings.get("mcp_servers", [])
+    
+    # mcp_servers가 None인 경우 빈 리스트 반환
+    if mcp_servers is None:
+        return []
+    
+    # 빈 리스트인 경우 그대로 반환
+    if not mcp_servers:
+        return []
+    
+    valid_servers = []
+    
+    # 각 서버를 검증하고 유효한 서버만 반환
+    for server in mcp_servers:
+        # 기본 설정 값 보완
+        server.setdefault("enabled", True)
+        server.setdefault("timeout", 30)
+        server.setdefault("headers", {})
+        
+        # 필수 필드 검증
+        if not server.get("name"):
+            logger.warning(f"MCP 서버 이름이 설정되지 않았습니다: {server}")
+            continue
+            
+        if not server.get("url"):
+            logger.warning(f"MCP 서버 URL이 설정되지 않았습니다: {server.get('name', 'Unknown')}")
+            continue
+            
+        # URL 검증 (HTTP만 허용)
+        url = server.get("url", "")
+        if not url.startswith(("http://", "https://")):
+            logger.warning(f"MCP 서버 URL이 HTTP 형식이 아닙니다: {server.get('name')} - {url}")
+            continue
+        
+        # 유효한 서버만 추가
+        valid_servers.append(server)
+        logger.debug(f"유효한 MCP 서버: {server.get('name')} - {server.get('url')}")
+    
+    return valid_servers
+
 def check_settings():
     """설정 파일 존재 여부 확인"""
     if not SETTINGS_FILE.exists():
@@ -87,7 +129,7 @@ def check_settings():
             logger.info("settings.yaml에서 openai.api_key를 설정하세요.")
             return False
         
-        logger.success("설정 파일 검증 완료")
+        logger.debug("설정 파일 검증 완료")
         return True
     except Exception as e:
         logger.error(f"설정 파일 읽기 오류: {e}")

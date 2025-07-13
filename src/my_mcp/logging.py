@@ -63,7 +63,7 @@ def setup_logging():
             diagnose=log_config["diagnose"],
         )
     
-    logger.info("로깅 시스템 초기화 완료")
+    logger.debug("로깅 시스템 초기화 완료")
     return logger
 
 def get_logger(name: str = None):

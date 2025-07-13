@@ -4,10 +4,14 @@ LangGraph를 사용한 AI 에이전트 서비스
 from typing import Dict, Any, List, Optional
 from langchain_openai import ChatOpenAI
 from langchain.schema import HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import ToolMessage
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
+from langgraph.prebuilt import ToolNode
 from typing_extensions import Annotated, TypedDict
 from ..logging import get_logger
+from ..tools import get_tool_registry
+from ..mcp import mcp_registry, mcp_client_manager
 
 # 서비스 전용 로거 생성
 logger = get_logger("my_mcp.agent.service")
@@ -22,16 +26,27 @@ class AgentState(TypedDict):
 class AgentService:
     """LangGraph 기반 AI 에이전트 서비스"""
     
-    def __init__(self, openai_config: Dict[str, Any], agent_config: Dict[str, Any]):
+    def __init__(self, openai_config: Dict[str, Any], agent_config: Dict[str, Any], mcp_servers: List[Dict[str, Any]] = None):
         """
         AI 에이전트 서비스 초기화
         
         Args:
             openai_config: OpenAI API 설정
             agent_config: 에이전트 설정
+            mcp_servers: MCP 서버 설정 목록
         """
         self.openai_config = openai_config
         self.agent_config = agent_config
+        
+        # MCP 서버 초기화
+        self.mcp_servers = mcp_servers or []
+        self._initialize_mcp_servers()
+        
+        # 도구 레지스트리 초기화
+        self.tool_registry = get_tool_registry()
+        self.tools = self.tool_registry.get_enabled_tools()
+        
+        # LLM 초기화 (도구 바인딩 포함)
         self.llm = ChatOpenAI(
             api_key=openai_config["api_key"],
             model=openai_config["model"],
@@ -40,6 +55,17 @@ class AgentService:
             streaming=openai_config.get("streaming", True)
         )
         
+        # LLM에 도구 바인딩
+        if self.tools:
+            self.llm_with_tools = self.llm.bind_tools(self.tools)
+            logger.debug(f"도구 바인딩 완료: {len(self.tools)}개 도구")
+        else:
+            self.llm_with_tools = self.llm
+            logger.debug("사용 가능한 도구가 없습니다")
+        
+        # 도구 노드 생성
+        self.tool_node = ToolNode(self.tools) if self.tools else None
+        
         # LangGraph 워크플로우 생성
         self.workflow = self._create_workflow()
         self.app = self.workflow.compile()
@@ -47,7 +73,81 @@ class AgentService:
         # 시스템 프롬프트 설정
         self.system_prompt = agent_config["system_prompt"]
         
-        logger.info(f"AI 에이전트 서비스 초기화 완료: {agent_config['name']}")
+        logger.debug(f"AI 에이전트 서비스 초기화 완료: {agent_config['name']}")
+    
+    def _initialize_mcp_servers(self) -> None:
+        """MCP 서버 초기화"""
+        if not self.mcp_servers:
+            logger.debug("MCP 서버 설정이 없습니다")
+            return
+            
+        try:
+            # MCP 레지스트리에 서버 로드
+            mcp_registry.load_from_config(self.mcp_servers)
+            
+            # 공식 MCP 관리자에 서버 설정
+            servers = mcp_registry.get_enabled_servers()
+            mcp_client_manager.set_servers(servers)
+            
+            logger.info(f"MCP 서버 초기화 완료: {len(self.mcp_servers)}개 서버")
+            
+        except Exception as e:
+            logger.error(f"MCP 서버 초기화 실패: {e}")
+    
+    async def connect_mcp_servers(self) -> Dict[str, bool]:
+        """MCP 서버들에 연결"""
+        try:
+            # 공식 MCP 관리자 초기화
+            success = await mcp_client_manager.initialize()
+            
+            if success:
+                # MCP 도구 통합
+                await self._integrate_mcp_tools()
+                
+                # 연결 성공한 서버 목록
+                servers = mcp_registry.get_enabled_servers()
+                connection_results = {server.name: True for server in servers}
+                logger.info(f"MCP 서버 연결 성공: {len(servers)}개 서버")
+                
+                return connection_results
+            else:
+                logger.error("MCP 서버 연결 실패")
+                return {}
+                
+        except Exception as e:
+            logger.error(f"MCP 서버 연결 오류: {e}")
+            return {}
+    
+    async def _integrate_mcp_tools(self) -> None:
+        """MCP 도구를 기존 도구 목록에 통합"""
+        try:
+            # 공식 라이브러리에서 도구 가져오기
+            mcp_tools = mcp_client_manager.get_tools()
+            
+            if mcp_tools:
+                # 기존 도구와 MCP 도구를 합치기
+                combined_tools = list(self.tools) + mcp_tools
+                self.tools = combined_tools
+                
+                # LLM에 다시 바인딩
+                self.llm_with_tools = self.llm.bind_tools(self.tools)
+                
+                # 도구 노드 다시 생성
+                self.tool_node = ToolNode(self.tools)
+                
+                # 워크플로우 재생성
+                self.workflow = self._create_workflow()
+                self.app = self.workflow.compile()
+                
+                logger.info(f"MCP 도구 통합 완료: {len(mcp_tools)}개 도구 추가")
+                
+        except Exception as e:
+            logger.error(f"MCP 도구 통합 오류: {e}")
+    
+    async def disconnect_mcp_servers(self) -> None:
+        """MCP 서버들 연결 해제"""
+        await mcp_client_manager.close()
+        logger.info("모든 MCP 서버 연결 해제 완료")
     
     def _create_workflow(self) -> StateGraph:
         """LangGraph 워크플로우 생성"""
@@ -59,9 +159,27 @@ class AgentService:
         workflow.add_node("generate_response", self._generate_response)
         workflow.add_node("format_output", self._format_output)
         
+        # 도구 사용 시 도구 노드 추가
+        if self.tool_node:
+            workflow.add_node("call_tools", self.tool_node)
+        
         # 엣지 추가
         workflow.add_edge("process_input", "generate_response")
-        workflow.add_edge("generate_response", "format_output")
+        
+        # 도구 사용 여부에 따른 조건부 엣지 추가
+        if self.tool_node:
+            workflow.add_conditional_edges(
+                "generate_response",
+                self._should_call_tools,
+                {
+                    "call_tools": "call_tools",
+                    "format_output": "format_output"
+                }
+            )
+            workflow.add_edge("call_tools", "generate_response")
+        else:
+            workflow.add_edge("generate_response", "format_output")
+        
         workflow.add_edge("format_output", END)
         
         # 시작점 설정
@@ -96,23 +214,17 @@ class AgentService:
         messages = state["messages"]
         
         try:
-            # LLM을 사용하여 응답 생성
-            if self.llm.streaming:
-                # 스트리밍 모드
-                full_response = ""
-                for chunk in self.llm.stream(messages):
-                    if hasattr(chunk, 'content') and chunk.content:
-                        full_response += chunk.content
-                ai_response = full_response
-            else:
-                # 일반 모드
-                response = self.llm.invoke(messages)
-                ai_response = response.content
+            # 도구 바인딩된 LLM을 사용하여 응답 생성
+            response = self.llm_with_tools.invoke(messages)
             
             # 응답을 메시지 목록에 추가
-            messages.append(AIMessage(content=ai_response))
+            messages.append(response)
+            
+            # 응답 내용 추출
+            ai_response = response.content if response.content else ""
             
             logger.debug(f"AI 응답 생성: {ai_response[:100]}...")
+            logger.debug(f"도구 호출 여부: {hasattr(response, 'tool_calls') and response.tool_calls}")
             
             return {
                 "messages": messages,
@@ -127,6 +239,21 @@ class AgentService:
                 "messages": messages + [AIMessage(content=error_message)],
                 "ai_response": error_message
             }
+    
+    def _should_call_tools(self, state: AgentState) -> str:
+        """도구 호출 여부 결정"""
+        messages = state["messages"]
+        
+        # 마지막 메시지가 도구 호출인지 확인
+        if messages:
+            last_message = messages[-1]
+            # AIMessage에서 tool_calls 확인
+            if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
+                logger.debug(f"도구 호출 감지: {last_message.tool_calls}")
+                return "call_tools"
+        
+        logger.debug("도구 호출 없음, 출력 포맷팅으로 이동")
+        return "format_output"
     
     def _format_output(self, state: AgentState) -> Dict[str, Any]:
         """출력 포맷팅"""
@@ -186,48 +313,17 @@ class AgentService:
             AI 응답 청크
         """
         try:
-            # 초기 상태 설정
-            initial_state = {
-                "messages": conversation_state.get("messages", []) if conversation_state else [],
-                "user_input": user_input,
-                "system_prompt": self.system_prompt,
-                "ai_response": ""
-            }
+            # 워크플로우를 통해 응답 생성 (도구 호출 포함)
+            response = await self.chat(user_input, conversation_state)
             
-            # 직접 스트리밍 (LangGraph 워크플로우를 거치지 않고)
-            messages = initial_state["messages"]
-            
-            # 첫 번째 메시지인 경우 시스템 프롬프트 추가
-            if not messages:
-                messages.append(SystemMessage(content=self.system_prompt))
-            
-            # 사용자 메시지 추가
-            messages.append(HumanMessage(content=user_input))
-            
-            # 스트리밍 응답 생성 (로그 최소화)
-            logger.debug("스트리밍 모드로 응답 생성 시작")
-            full_response = ""
-            chunk_count = 0
-            async for chunk in self.llm.astream(messages):
-                chunk_count += 1
-                logger.debug(f"청크 {chunk_count}: {chunk}")
-                if hasattr(chunk, 'content') and chunk.content:
-                    content = chunk.content
-                    logger.debug(f"응답 청크: '{content}'")
-                    yield content
-                    full_response += content
+            # 응답을 청크로 나누어 스트리밍 시뮬레이션
+            words = response.split()
+            for i, word in enumerate(words):
+                if i == 0:
+                    yield word
                 else:
-                    logger.debug(f"빈 청크 또는 content 없음: {chunk}")
-            
-            # 스트리밍 완료 후 로그 (줄 나눔 추가)
-            logger.debug(f"스트리밍 완료 - 총 청크: {chunk_count}, 응답 길이: {len(full_response)}")
-            
-            # 대화 상태 업데이트
-            if conversation_state is not None:
-                # AI 응답을 메시지 목록에 추가
-                messages.append(AIMessage(content=full_response))
-                conversation_state["messages"] = messages
-            
+                    yield " " + word
+                    
             logger.debug("스트리밍 응답 처리 완료")
             
         except Exception as e:
@@ -241,16 +337,27 @@ class AgentService:
     def get_agent_name(self) -> str:
         """에이전트 이름 반환"""
         return self.agent_config["name"]
+    
+    def get_tool_info(self) -> Dict[str, Any]:
+        """도구 정보 반환"""
+        tool_info = {
+            "tools": self.tool_registry.get_tool_info(),
+            "count": self.tool_registry.get_tool_count(),
+            "mcp_tools": mcp_client_manager.get_tool_info(),
+            "mcp_servers": [server.to_dict() for server in mcp_registry.get_all_servers()]
+        }
+        return tool_info
 
-def create_agent_service(openai_config: Dict[str, Any], agent_config: Dict[str, Any]) -> AgentService:
+def create_agent_service(openai_config: Dict[str, Any], agent_config: Dict[str, Any], mcp_servers: List[Dict[str, Any]] = None) -> AgentService:
     """
     AI 에이전트 서비스 인스턴스 생성
     
     Args:
         openai_config: OpenAI API 설정
         agent_config: 에이전트 설정
+        mcp_servers: MCP 서버 설정 목록
         
     Returns:
         AgentService 인스턴스
     """
-    return AgentService(openai_config, agent_config) 
+    return AgentService(openai_config, agent_config, mcp_servers) 
