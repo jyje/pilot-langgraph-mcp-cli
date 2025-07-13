@@ -13,7 +13,7 @@ openai:
 chatbot:
   name: "LangGraph Assistant"
   welcome_message: "안녕하세요! LangGraph 챗봇입니다. 무엇을 도와드릴까요?"
-  system_prompt: "당신은 도움이 되는 AI 어시스턴트입니다. 친절하고 정확한 답변을 제공해주세요."
+  system_prompt: "당신은 도움이 되는 AI 어시스턴트입니다. 친절하고 정확한 답변을 제공해주세요. 사용자가 현재 시간이나 날짜를 물어보면 get_current_time 도구를 사용하여 정확한 시간 정보를 제공하세요."
 
   # 로깅 설정 (loguru)
   logging:
