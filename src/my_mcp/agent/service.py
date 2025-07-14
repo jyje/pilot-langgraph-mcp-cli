@@ -1,7 +1,7 @@
 """
 LangGraph를 사용한 AI 에이전트 서비스
 """
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from langchain_openai import ChatOpenAI
 from langchain.schema import HumanMessage, AIMessage, SystemMessage
 from langchain_core.messages import ToolMessage
@@ -22,6 +22,7 @@ class AgentState(TypedDict):
     system_prompt: str
     user_input: str
     ai_response: str
+    tool_calls: List[Dict[str, Any]]  # 도구 호출 정보 저장
 
 class AgentService:
     """LangGraph 기반 AI 에이전트 서비스"""
@@ -223,12 +224,61 @@ class AgentService:
             # 응답 내용 추출
             ai_response = response.content if response.content else ""
             
+            # 도구 호출 정보 추출 (다양한 방법으로 시도)
+            tool_calls = []
+            
+            # 방법 1: response.tool_calls 확인
+            if hasattr(response, 'tool_calls') and response.tool_calls:
+                logger.debug(f"tool_calls 속성 발견: {response.tool_calls}")
+                for tool_call in response.tool_calls:
+                    tool_info = {
+                        "id": getattr(tool_call, 'id', str(tool_call.get('id', 'unknown'))),
+                        "name": getattr(tool_call, 'name', tool_call.get('name', 'unknown')),
+                        "args": getattr(tool_call, 'args', tool_call.get('args', {})),
+                        "type": getattr(tool_call, 'type', tool_call.get('type', 'function'))
+                    }
+                    tool_calls.append(tool_info)
+            
+            # 방법 2: additional_kwargs 확인
+            elif hasattr(response, 'additional_kwargs') and response.additional_kwargs:
+                additional_kwargs = response.additional_kwargs
+                logger.debug(f"additional_kwargs 확인: {additional_kwargs}")
+                if 'tool_calls' in additional_kwargs:
+                    for tool_call in additional_kwargs['tool_calls']:
+                        tool_info = {
+                            "id": tool_call.get('id', 'unknown'),
+                            "name": tool_call.get('function', {}).get('name', 'unknown'),
+                            "args": tool_call.get('function', {}).get('arguments', {}),
+                            "type": tool_call.get('type', 'function')
+                        }
+                        tool_calls.append(tool_info)
+            
+            # 방법 3: 메시지 히스토리에서 도구 호출 확인
+            if not tool_calls:
+                # 최근 메시지들을 확인하여 도구 호출 찾기
+                for msg in reversed(messages[-5:]):  # 최근 5개 메시지만 확인
+                    if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                        logger.debug(f"메시지 히스토리에서 도구 호출 발견: {msg.tool_calls}")
+                        for tool_call in msg.tool_calls:
+                            tool_info = {
+                                "id": getattr(tool_call, 'id', str(tool_call.get('id', 'unknown'))),
+                                "name": getattr(tool_call, 'name', tool_call.get('name', 'unknown')),
+                                "args": getattr(tool_call, 'args', tool_call.get('args', {})),
+                                "type": getattr(tool_call, 'type', tool_call.get('type', 'function'))
+                            }
+                            tool_calls.append(tool_info)
+                        break
+            
+            # 디버그 로그 추가
             logger.debug(f"AI 응답 생성: {ai_response[:100]}...")
-            logger.debug(f"도구 호출 여부: {hasattr(response, 'tool_calls') and response.tool_calls}")
+            logger.debug(f"도구 호출 정보 추출 결과: {tool_calls}")
+            logger.debug(f"응답 타입: {type(response)}")
+            logger.debug(f"응답 속성: {dir(response)}")
             
             return {
                 "messages": messages,
-                "ai_response": ai_response
+                "ai_response": ai_response,
+                "tool_calls": tool_calls
             }
         
         except Exception as e:
@@ -237,7 +287,8 @@ class AgentService:
             
             return {
                 "messages": messages + [AIMessage(content=error_message)],
-                "ai_response": error_message
+                "ai_response": error_message,
+                "tool_calls": []
             }
     
     def _should_call_tools(self, state: AgentState) -> str:
@@ -250,6 +301,22 @@ class AgentService:
             # AIMessage에서 tool_calls 확인
             if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
                 logger.debug(f"도구 호출 감지: {last_message.tool_calls}")
+                
+                # 도구 호출 정보를 상태에 저장
+                tool_calls = []
+                for tool_call in last_message.tool_calls:
+                    tool_info = {
+                        "id": getattr(tool_call, 'id', str(tool_call.get('id', 'unknown'))),
+                        "name": getattr(tool_call, 'name', tool_call.get('name', 'unknown')),
+                        "args": getattr(tool_call, 'args', tool_call.get('args', {})),
+                        "type": getattr(tool_call, 'type', tool_call.get('type', 'function'))
+                    }
+                    tool_calls.append(tool_info)
+                
+                # 상태 업데이트
+                state["tool_calls"] = tool_calls
+                logger.debug(f"도구 호출 정보 상태에 저장: {tool_calls}")
+                
                 return "call_tools"
         
         logger.debug("도구 호출 없음, 출력 포맷팅으로 이동")
@@ -258,17 +325,171 @@ class AgentService:
     def _format_output(self, state: AgentState) -> Dict[str, Any]:
         """출력 포맷팅"""
         ai_response = state["ai_response"]
+        tool_calls = state.get("tool_calls", [])
         
-        # 필요에 따라 응답 포맷팅 로직 추가
-        formatted_response = ai_response.strip()
+        # 마크다운 텍스트 줄 나눔 개선
+        formatted_response = self._improve_line_breaks(ai_response)
         
         logger.debug("응답 포맷팅 완료")
         
         return {
-            "ai_response": formatted_response
+            "ai_response": formatted_response,
+            "tool_calls": tool_calls
         }
     
-    async def chat(self, user_input: str, conversation_state: Optional[Dict] = None) -> str:
+    def _improve_line_breaks(self, text: str) -> str:
+        """마크다운 텍스트의 줄 나눔을 개선합니다."""
+        if not text:
+            return text
+        
+        # 기본 텍스트 정리
+        text = text.strip()
+        
+        # 마크다운 헤더 앞뒤에 빈 줄 추가
+        import re
+        
+        # ###, ##, # 헤더 앞뒤에 빈 줄 추가
+        text = re.sub(r'([^\n])\n(#{1,6}\s)', r'\1\n\n\2', text)
+        text = re.sub(r'(#{1,6}[^\n]*)\n([^\n#])', r'\1\n\n\2', text)
+        
+        # 목록 항목 (-로 시작하는 줄) 앞에 줄 나눔 추가
+        text = re.sub(r'([^\n])\n(-\s\*\*)', r'\1\n\n\2', text)
+        text = re.sub(r'([^\n])\n(-\s)', r'\1\n\2', text)
+        
+        # **굵은 텍스트** 앞뒤에 적절한 공백 추가 (줄바꿈 보존)
+        # 줄바꿈이 아닌 문자 뒤에 오는 굵은 텍스트 앞에 공백 추가
+        text = re.sub(r'([^\s\n])\s*(\*\*[^*]+\*\*)', r'\1 \2', text)
+        # 굵은 텍스트 뒤에 오는 줄바꿈이 아닌 문자 앞에 공백 추가
+        text = re.sub(r'(\*\*[^*]+\*\*)\s*([^\s\n])', r'\1 \2', text)
+        
+        # **굵은 텍스트** 뒤에 줄바꿈 없이 바로 이어지는 항목들을 분리
+        text = re.sub(r'(\*\*[^*]+\*\*)\s*(\*\*[^*]+\*\*)', r'\1\n\n\2', text)
+        
+        # 연속된 빈 줄을 하나로 통합
+        text = re.sub(r'\n\n\n+', '\n\n', text)
+        
+        return text
+    
+    def _smart_split_for_streaming(self, text: str) -> list:
+        """마크다운 구문을 보호하면서 텍스트를 분할합니다."""
+        import re
+        
+        # 마크다운 구문을 보호하면서 분할
+        # **텍스트**와 같은 패턴은 하나의 토큰으로 유지
+        pattern = r'(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`|[^\s]+)'
+        
+        # 패턴에 따라 토큰들을 분할
+        tokens = re.findall(pattern, text)
+        
+        # 빈 토큰 제거
+        result = [token for token in tokens if token.strip()]
+        
+        return result
+    
+    def _format_tool_display_name(self, tool_name: str) -> str:
+        """도구 이름을 사용자에게 친숙하게 표시하기 위해 포맷팅합니다."""
+        display_name = tool_name
+        
+        # MCP 도구의 경우 prefix 제거
+        if tool_name.startswith("mcp_"):
+            display_name = tool_name[4:]  # "mcp_" 제거
+        
+        # 언더스코어를 공백으로 변환하고 제목 형식으로 변환
+        display_name = display_name.replace("_", " ").title()
+        
+        # 일반적인 약어들은 대문자로 유지
+        common_abbreviations = ["Api", "Url", "Id", "Uuid", "Json", "Xml", "Http", "Https"]
+        for abbr in common_abbreviations:
+            display_name = display_name.replace(abbr, abbr.upper())
+        
+        return display_name
+
+    def _format_tool_usage_info(self, tool_calls: List[Dict[str, Any]]) -> str:
+        """도구 사용 정보를 포맷팅합니다."""
+        if not tool_calls:
+            return ""
+        
+        info_parts = []
+        
+        for i, tool_call in enumerate(tool_calls, 1):
+            tool_name = tool_call.get("name", "unknown")
+            tool_args = tool_call.get("args", {})
+            tool_id = tool_call.get("id", "unknown")
+            
+            # 도구 이름을 친숙하게 표시
+            display_name = self._format_tool_display_name(tool_name)
+            
+            # 도구 설명 가져오기
+            tool_description = self._get_tool_description(tool_name)
+            
+            # 파라미터 요약
+            param_summary = self._format_tool_parameters(tool_args)
+            
+            info_parts.append(f"**{i}. {display_name}**")
+            if tool_description and tool_description != '도구 설명이 없습니다':
+                info_parts.append(f"   - 설명: {tool_description}")
+            if param_summary:
+                info_parts.append(f"   - 파라미터: {param_summary}")
+            info_parts.append(f"   - 도구 ID: `{tool_id}`")
+        
+        return "\n".join(info_parts)
+    
+    def _get_tool_description(self, tool_name: str) -> str:
+        """도구 설명을 동적으로 가져옵니다."""
+        # 1. 기본 도구 레지스트리에서 도구 정보 가져오기
+        for tool in self.tools:
+            if getattr(tool, 'name', None) == tool_name:
+                # LangChain 도구의 description 속성 사용
+                description = getattr(tool, 'description', None)
+                if description:
+                    return description
+                
+                # func 속성의 __doc__ 사용
+                if hasattr(tool, 'func') and hasattr(tool.func, '__doc__') and tool.func.__doc__:
+                    return tool.func.__doc__.strip()
+                
+                break
+        
+        # 2. MCP 도구의 경우 MCP 클라이언트에서 도구 정보 가져오기
+        try:
+            mcp_tool_info = mcp_client_manager.get_tool_info()
+            if tool_name in mcp_tool_info:
+                tool_info = mcp_tool_info[tool_name]
+                if isinstance(tool_info, dict):
+                    return tool_info.get('description', '도구 설명이 없습니다')
+                elif hasattr(tool_info, 'description'):
+                    return tool_info.description
+        except Exception as e:
+            logger.debug(f"MCP 도구 정보 가져오기 실패: {e}")
+        
+        # 3. 도구 레지스트리에서 메타데이터 가져오기
+        try:
+            tool_registry_info = self.tool_registry.get_tool_info()
+            for tool_info in tool_registry_info:
+                if tool_info.get('name') == tool_name:
+                    return tool_info.get('description', '도구 설명이 없습니다')
+        except Exception as e:
+            logger.debug(f"도구 레지스트리 정보 가져오기 실패: {e}")
+        
+        # 4. 기본값 반환
+        return '도구 설명이 없습니다'
+    
+    def _format_tool_parameters(self, args: Dict[str, Any]) -> str:
+        """도구 파라미터를 포맷팅합니다."""
+        if not args:
+            return "없음"
+        
+        param_parts = []
+        for key, value in args.items():
+            if isinstance(value, str) and len(value) > 50:
+                # 긴 문자열은 잘라서 표시
+                param_parts.append(f"{key}=\"{value[:50]}...\"")
+            else:
+                param_parts.append(f"{key}={value}")
+        
+        return ", ".join(param_parts)
+
+    async def chat(self, user_input: str, conversation_state: Optional[Dict] = None) -> Tuple[str, List[Dict[str, Any]]]:
         """
         사용자 입력에 대한 AI 에이전트 응답 생성
         
@@ -277,7 +498,7 @@ class AgentService:
             conversation_state: 대화 상태 (선택사항)
             
         Returns:
-            AI 응답
+            AI 응답과 도구 호출 정보의 튜플
         """
         try:
             # 초기 상태 설정
@@ -285,7 +506,8 @@ class AgentService:
                 "messages": conversation_state.get("messages", []) if conversation_state else [],
                 "user_input": user_input,
                 "system_prompt": self.system_prompt,
-                "ai_response": ""
+                "ai_response": "",
+                "tool_calls": []
             }
             
             # 워크플로우 실행
@@ -295,40 +517,137 @@ class AgentService:
             if conversation_state is not None:
                 conversation_state["messages"] = result["messages"]
             
-            return result["ai_response"]
+            return result["ai_response"], result.get("tool_calls", [])
             
         except Exception as e:
             logger.error(f"채팅 처리 실패: {e}")
-            return "죄송합니다. 요청을 처리하는 중에 오류가 발생했습니다."
+            return "죄송합니다. 요청을 처리하는 중에 오류가 발생했습니다.", []
     
-    async def chat_stream(self, user_input: str, conversation_state: Optional[Dict] = None):
+    async def chat_stream_with_workflow(self, user_input: str, conversation_state: Optional[Dict] = None, debug_mode: bool = False):
+        """
+        워크플로우 단계별 실행과 함께 스트리밍 응답 생성
+        
+        Args:
+            user_input: 사용자 입력
+            conversation_state: 대화 상태 (선택사항)
+            debug_mode: 디버그 모드 (모델 ID 표시 여부)
+            
+        Yields:
+            워크플로우 단계별 정보와 응답 청크
+        """
+        try:
+            # 초기 상태 설정
+            initial_state = {
+                "messages": conversation_state.get("messages", []) if conversation_state else [],
+                "user_input": user_input,
+                "system_prompt": self.system_prompt,
+                "ai_response": "",
+                "tool_calls": []
+            }
+            
+            # 상태 추적 변수
+            tools_displayed = False
+            final_response_started = False
+            
+            # 워크플로우 스트리밍 실행
+            async for chunk in self.app.astream(initial_state):
+                # 각 노드 실행 상태 확인
+                for node_name, node_state in chunk.items():
+                    if node_name == "generate_response":
+                        # AI 응답 생성 시작
+                        if debug_mode:
+                            yield {"type": "workflow_step", "data": {"step": "generate_response", "status": "started"}}
+                        
+                        # 도구 호출 정보 확인 (첫 번째 generate_response에서만)
+                        tool_calls = node_state.get("tool_calls", [])
+                        if tool_calls and not tools_displayed:
+                            # 도구 호출 예정 알림
+                            yield {"type": "tools_pending", "data": {"tool_calls": tool_calls, "debug_mode": debug_mode}}
+                            tools_displayed = True
+                        
+                        # AI 응답이 시작된 경우 (도구 호출 후 두 번째 generate_response)
+                        ai_response = node_state.get("ai_response", "")
+                        if ai_response and not final_response_started:
+                            final_response_started = True
+                            yield {"type": "ai_response_ready", "data": {"response": ai_response}}
+                    
+                    elif node_name == "call_tools":
+                        # 도구 실행 시작
+                        if debug_mode:
+                            yield {"type": "workflow_step", "data": {"step": "call_tools", "status": "started"}}
+                        
+                        # 메시지에서 도구 호출 정보 추출
+                        messages = node_state.get("messages", [])
+                        if messages:
+                            # 도구 호출 메시지 찾기
+                            for msg in reversed(messages):
+                                if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                                    # 개별 도구 실행 상태 표시
+                                    for tool_call in msg.tool_calls:
+                                        tool_name = getattr(tool_call, 'name', tool_call.get('name', 'unknown'))
+                                        yield {"type": "tool_executing", "data": {"tool_name": tool_name}}
+                                    break
+                        
+                        # 도구 실행 완료
+                        if debug_mode:
+                            yield {"type": "workflow_step", "data": {"step": "call_tools", "status": "completed"}}
+                    
+                    elif node_name == "format_output":
+                        # 출력 포맷팅
+                        if debug_mode:
+                            yield {"type": "workflow_step", "data": {"step": "format_output", "status": "started"}}
+                        
+                        # 최종 응답 포맷팅 및 스트리밍
+                        ai_response = node_state.get("ai_response", "")
+                        if ai_response:
+                            # 대화 상태 업데이트
+                            if conversation_state is not None:
+                                conversation_state["messages"] = node_state.get("messages", [])
+                            
+                            # 포맷팅된 응답 스트리밍
+                            formatted_response = self._improve_line_breaks(ai_response)
+                            lines = formatted_response.split('\n')
+                            
+                            for line_idx, line in enumerate(lines):
+                                if line.strip():
+                                    tokens = self._smart_split_for_streaming(line)
+                                    for token_idx, token in enumerate(tokens):
+                                        if token_idx == 0:
+                                            yield {"type": "text", "data": token}
+                                        else:
+                                            yield {"type": "text", "data": " " + token}
+                                if line_idx < len(lines) - 1:
+                                    yield {"type": "text", "data": "\n"}
+                            
+                            # 스트리밍 완료
+                            yield {"type": "streaming_complete", "data": {"final_response": formatted_response}}
+                            return
+            
+            logger.debug("워크플로우 스트리밍 완료")
+            
+        except Exception as e:
+            logger.error(f"워크플로우 스트리밍 실패: {e}")
+            yield {"type": "error", "data": "죄송합니다. 요청을 처리하는 중에 오류가 발생했습니다."}
+
+    async def chat_stream(self, user_input: str, conversation_state: Optional[Dict] = None, debug_mode: bool = False):
         """
         사용자 입력에 대한 AI 에이전트 응답을 스트리밍으로 생성
         
         Args:
             user_input: 사용자 입력
             conversation_state: 대화 상태 (선택사항)
+            debug_mode: 디버그 모드 (모델 ID 표시 여부)
             
         Yields:
-            AI 응답 청크
+            AI 응답 청크 (워크플로우 단계별 정보 포함)
         """
-        try:
-            # 워크플로우를 통해 응답 생성 (도구 호출 포함)
-            response = await self.chat(user_input, conversation_state)
-            
-            # 응답을 청크로 나누어 스트리밍 시뮬레이션
-            words = response.split()
-            for i, word in enumerate(words):
-                if i == 0:
-                    yield word
-                else:
-                    yield " " + word
-                    
-            logger.debug("스트리밍 응답 처리 완료")
-            
-        except Exception as e:
-            logger.error(f"스트리밍 채팅 처리 실패: {e}")
-            yield "죄송합니다. 요청을 처리하는 중에 오류가 발생했습니다."
+        # 새로운 워크플로우 스트리밍 방식 사용
+        async for chunk in self.chat_stream_with_workflow(user_input, conversation_state, debug_mode):
+            yield chunk
+
+    def get_tool_usage_info(self, tool_calls: List[Dict[str, Any]]) -> str:
+        """도구 사용 정보를 포맷팅된 문자열로 반환합니다."""
+        return self._format_tool_usage_info(tool_calls)
     
     def get_welcome_message(self) -> str:
         """환영 메시지 반환"""

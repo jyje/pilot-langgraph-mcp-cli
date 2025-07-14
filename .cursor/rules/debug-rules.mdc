@@ -1,0 +1,227 @@
+# E2E 테스트 필수 규칙
+
+## 🚨 **절대 규칙: 새 기능 → E2E 테스트 필수**
+
+### 새로운 CLI 명령어 추가 시
+
+**반드시 다음을 추가해야 합니다:**
+
+1. **E2E 테스트 파일 생성**
+   - `tests/e2e/test_[명령어명]_command.py` 파일 생성
+   - 모든 옵션 조합 테스트 케이스 작성
+   - 에러 케이스 및 엣지 케이스 테스트 포함
+
+2. **테스트 커버리지 요구사항**
+   - ✅ 기본 명령어 실행 테스트
+   - ✅ 모든 개별 옵션 테스트 (`--option`)
+   - ✅ 모든 단축 옵션 테스트 (`-o`)
+   - ✅ 옵션 조합 테스트 (2개 이상 조합)
+   - ✅ 전역 옵션과의 조합 테스트
+   - ✅ 에러 케이스 테스트 (잘못된 입력)
+   - ✅ 엣지 케이스 테스트 (빈 값, 특수문자 등)
+   - ✅ `--help` 옵션 테스트
+
+### 기존 CLI 명령어 수정 시
+
+**반드시 다음을 업데이트해야 합니다:**
+
+1. **해당 E2E 테스트 업데이트**
+   - 새로운 옵션 추가 시 → 새 테스트 케이스 추가
+   - 옵션 제거 시 → 관련 테스트 케이스 제거
+   - 동작 변경 시 → 테스트 검증 로직 업데이트
+
+2. **조합 테스트 확장**
+   - 새 옵션과 기존 옵션들의 모든 조합 테스트
+   - 전역 옵션과의 조합 테스트 추가
+
+## 📋 **E2E 테스트 작성 템플릿**
+
+### 새 명령어 테스트 파일 구조
+
+```python
+"""E2E tests for 'my-mcp [새명령어]' command - all option combinations"""
+
+import pytest
+from src.main import app
+
+class Test[새명령어]Command:
+    """[새명령어] 명령어의 모든 옵션 조합 테스트"""
+    
+    def test_[새명령어]_help(self, cli_runner):
+        """[새명령어] --help 명령 테스트"""
+        result = cli_runner.invoke(app, ['[새명령어]', '--help'])
+        assert result.exit_code == 0
+        assert 'Usage:' in result.output
+    
+    def test_[새명령어]_basic(self, cli_runner):
+        """[새명령어] - 기본 실행 테스트"""
+        result = cli_runner.invoke(app, ['[새명령어]'])
+        assert result.exit_code == 0
+    
+    @pytest.mark.parametrize("option_value", [
+        "value1",
+        "value2",
+    ])
+    def test_[새명령어]_with_option(self, cli_runner, option_value):
+        """[새명령어] --option 테스트"""
+        result = cli_runner.invoke(app, ['[새명령어]', '--option', option_value])
+        assert result.exit_code == 0
+    
+    # 모든 옵션 조합 테스트 - 필수!
+    @pytest.mark.parametrize("options", [
+        ['--option1', 'value1'],
+        ['--option2', 'value2'],
+        ['--option1', 'value1', '--option2', 'value2'],
+    ])
+    def test_[새명령어]_option_combinations(self, cli_runner, options):
+        """[새명령어] 옵션 조합 테스트"""
+        cmd = ['[새명령어]'] + options
+        result = cli_runner.invoke(app, cmd)
+        assert result.exit_code == 0
+    
+    # 전역 옵션 조합 테스트 - 필수!
+    @pytest.mark.parametrize("global_options", [
+        ['--verbose'],
+        ['--quiet'],
+        ['--output', 'json'],
+    ])
+    def test_[새명령어]_with_global_options(self, cli_runner, global_options):
+        """[새명령어]와 전역 옵션 조합 테스트"""
+        cmd = global_options + ['[새명령어]']
+        result = cli_runner.invoke(app, cmd)
+        assert result.exit_code == 0
+
+class Test[새명령어]EdgeCases:
+    """[새명령어] 명령어 엣지 케이스 테스트"""
+    
+    def test_[새명령어]_invalid_option(self, cli_runner):
+        """잘못된 옵션 값 테스트"""
+        result = cli_runner.invoke(app, ['[새명령어]', '--option', 'invalid'])
+        assert result.exit_code in [0, 1, 2]  # 에러 처리에 따라
+    
+    def test_[새명령어]_empty_value(self, cli_runner):
+        """빈 값 테스트"""
+        result = cli_runner.invoke(app, ['[새명령어]', '--option', ''])
+        assert result.exit_code in [0, 1]
+```
+
+### 기존 테스트 파일에 추가할 때
+
+```python
+# 새 옵션 추가 시
+@pytest.mark.parametrize("new_option", [
+    "new_value1",
+    "new_value2",
+])
+def test_command_new_option(self, cli_runner, new_option):
+    """새로운 옵션 테스트"""
+    result = cli_runner.invoke(app, ['command', '--new-option', new_option])
+    assert result.exit_code == 0
+
+# 기존 조합 테스트에 새 옵션 추가
+@pytest.mark.parametrize("options", [
+    # 기존 케이스들...
+    ['--existing-option', 'value', '--new-option', 'new_value'],  # 새 조합 추가
+])
+```
+
+## 🔧 **테스트 실행 규칙**
+
+### 개발 중 필수 실행
+
+```bash
+# 새 기능 개발 후 반드시 실행
+make test-e2e                    # 모든 E2E 테스트
+make test-[명령어명]            # 해당 명령어만 테스트
+
+# 커밋 전 필수 실행
+make test-smoke                  # 빠른 스모크 테스트
+```
+
+### 테스트 통과 기준
+
+- ✅ **모든 E2E 테스트 통과** (exit_code = 0)
+- ✅ **새 기능의 모든 옵션 조합 테스트**
+- ✅ **기존 기능 회귀 테스트 통과**
+- ✅ **에러 케이스 적절한 처리**
+
+## 🚫 **금지 사항 (Anti-patterns)**
+
+### ❌ 절대 하지 말 것
+
+1. **하드코딩된 도구 설명**
+   ```python
+   # 나쁜 예
+   tool_descriptions = {
+       "tool_name": "하드코딩된 설명"
+   }
+   
+   # 좋은 예 - 동적 추출
+   description = self._get_tool_description(tool_name)
+   ```
+
+2. **E2E 테스트 없는 CLI 기능 추가**
+   ```python
+   # 금지! 새 CLI 옵션 추가 시 테스트 필수
+   @app.command()
+   def new_command(new_option: str = None):  # 테스트 없음 - 금지!
+       pass
+   ```
+
+3. **부분적 옵션 테스트**
+   ```python
+   # 나쁜 예 - 일부 조합만 테스트
+   def test_partial_combinations():
+       # 2개 옵션 중 1개만 테스트 - 불충분!
+   
+   # 좋은 예 - 모든 조합 테스트
+   @pytest.mark.parametrize("options", [
+       ['--opt1'],
+       ['--opt2'], 
+       ['--opt1', '--opt2'],  # 모든 조합!
+   ])
+   ```
+
+## 📝 **체크리스트**
+
+### 새 CLI 기능 추가 전
+
+- [ ] E2E 테스트 파일 생성 계획
+- [ ] 모든 옵션 조합 시나리오 작성
+- [ ] 에러 케이스 정의
+
+### 새 CLI 기능 추가 후
+
+- [ ] E2E 테스트 파일 생성 완료
+- [ ] 모든 옵션 개별 테스트 작성
+- [ ] 모든 옵션 조합 테스트 작성
+- [ ] 전역 옵션과의 조합 테스트 작성
+- [ ] 에러 케이스 테스트 작성
+- [ ] 엣지 케이스 테스트 작성
+- [ ] 스모크 테스트에 새 명령어 추가
+- [ ] Makefile 타겟 업데이트 (필요시)
+- [ ] `make test-e2e` 실행하여 모든 테스트 통과 확인
+
+### 기존 CLI 기능 수정 후
+
+- [ ] 관련 E2E 테스트 업데이트
+- [ ] 새 옵션의 모든 조합 테스트 추가
+- [ ] 변경된 동작의 검증 로직 업데이트
+- [ ] 회귀 테스트 실행하여 기존 기능 정상 동작 확인
+
+## 🎯 **목표**
+
+- **100% CLI 옵션 커버리지**: 모든 CLI 옵션과 조합이 테스트됨
+- **회귀 방지**: 새 기능이 기존 기능을 깨뜨리지 않음
+- **안정성 보장**: 모든 CLI 명령이 예상대로 동작함
+- **개발 신뢰성**: 코드 변경 시 즉시 문제 발견 가능
+
+## 📞 **예외 처리**
+
+E2E 테스트 추가가 불가능한 **극히 예외적인 경우**에만:
+
+1. **이유 명시**: 왜 E2E 테스트를 추가할 수 없는지 상세 설명
+2. **대체 방안**: 수동 테스트 절차 또는 다른 검증 방법 제시
+3. **향후 계획**: 언제 E2E 테스트를 추가할 예정인지 명시
+
+**하지만 99.9%의 경우 E2E 테스트는 추가 가능하며 필수입니다!**

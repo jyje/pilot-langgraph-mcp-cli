@@ -1,16 +1,20 @@
 # pilot-langgraph-mcp-cli
 
+*Read this in other languages: [English](README.md), [한국어](README.ko.md)*
+
 A LangGraph-based chatbot CLI tool using OpenAI API with MCP (Model Context Protocol) support.
 
 ## Key Features
 
 - **Interactive Chatbot**: Real-time conversation with AI
-- **Streaming Response**: Real-time response output
+- **Streaming Response**: Real-time response output with real-time tool usage tracking
 - **MCP Server Support**: Extensible tool system via Model Context Protocol
 - **Tool Registry System**: Centralized tool management and registration
 - **Enhanced DateTime Tools**: Built-in date/time tools with security validation
 - **Workflow Visualization**: Export LangGraph workflow as Mermaid diagrams with tool information
+- **Real-time Tool Tracking**: Live display of tool execution with debug mode support
 - **Configuration Management**: Flexible configuration management
+- **Comprehensive E2E Testing**: Complete CLI option coverage with automated testing
 
 ## Installation & Setup
 
@@ -67,6 +71,9 @@ my-mcp chat "Hello, how's the weather today?"
 
 # Disable streaming
 my-mcp chat --no-stream
+
+# Enable debug mode (shows tool IDs and workflow steps)
+my-mcp chat --debug
 
 # Save conversation
 my-mcp chat --save
@@ -130,6 +137,30 @@ pilot-langgraph-mcp-cli/
 ├── pyproject.toml            # Project configuration
 └── README.md
 ```
+
+## Testing
+
+This project includes comprehensive E2E testing for all CLI commands and option combinations.
+
+### Running Tests
+
+```bash
+# Install test dependencies
+make install-test-deps
+
+# Run all E2E tests
+make test
+
+# Quick smoke test
+make test-smoke
+
+# Test specific commands
+make test-chat      # Chat command tests
+make test-agent     # Agent command tests
+make test-basic     # Basic command tests
+```
+
+See [`tests/README.md`](tests/README.md) for detailed testing documentation.
 
 ## Development
 
