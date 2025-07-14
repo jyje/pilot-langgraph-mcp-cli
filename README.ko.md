@@ -1,16 +1,20 @@
 # pilot-langgraph-mcp-cli
 
+*다른 언어로 읽기: [English](README.md), [한국어](README.ko.md)*
+
 OpenAI API를 이용한 LangGraph 기반 챗봇 CLI 도구로 MCP (Model Context Protocol) 지원을 포함합니다.
 
 ## 주요 기능
 
 - **대화형 챗봇**: AI와 실시간 대화
-- **스트리밍 응답**: 실시간 응답 출력
+- **스트리밍 응답**: 실시간 도구 사용 추적이 포함된 실시간 응답 출력
 - **MCP 서버 지원**: Model Context Protocol을 통한 확장 가능한 도구 시스템
 - **도구 레지스트리 시스템**: 중앙 집중식 도구 관리 및 등록
 - **강화된 날짜/시간 도구**: 보안 검증 기능이 있는 내장 날짜/시간 도구
 - **워크플로우 시각화**: 도구 정보를 포함한 LangGraph 워크플로우를 Mermaid 다이어그램으로 출력
+- **실시간 도구 추적**: 디버그 모드 지원과 함께 도구 실행 상황을 실시간으로 표시
 - **설정 관리**: 유연한 설정 관리
+- **완전한 E2E 테스트**: 자동화된 테스트를 통한 모든 CLI 옵션 커버리지
 
 ## 설치 및 설정
 
@@ -67,6 +71,9 @@ my-mcp chat "안녕하세요, 오늘 날씨 어때요?"
 
 # 스트리밍 비활성화
 my-mcp chat --no-stream
+
+# 디버그 모드 활성화 (도구 ID와 워크플로우 단계 표시)
+my-mcp chat --debug
 
 # 대화 내용 저장
 my-mcp chat --save
@@ -130,6 +137,30 @@ pilot-langgraph-mcp-cli/
 ├── pyproject.toml            # 프로젝트 설정
 └── README.md
 ```
+
+## 테스트
+
+이 프로젝트는 모든 CLI 명령어와 옵션 조합에 대한 완전한 E2E 테스트를 포함합니다.
+
+### 테스트 실행
+
+```bash
+# 테스트 의존성 설치
+make install-test-deps
+
+# 모든 E2E 테스트 실행
+make test
+
+# 빠른 스모크 테스트
+make test-smoke
+
+# 특정 명령어 테스트
+make test-chat      # chat 명령어 테스트
+make test-agent     # agent 명령어 테스트
+make test-basic     # 기본 명령어 테스트
+```
+
+자세한 테스트 문서는 [`tests/README.ko.md`](tests/README.ko.md) (한글) 또는 [`tests/README.md`](tests/README.md) (영어)를 참조하세요.
 
 ## 개발
 

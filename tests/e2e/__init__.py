@@ -1,0 +1,1 @@
+"""End-to-End CLI tests for my-mcp commands""" 

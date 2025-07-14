@@ -384,13 +384,13 @@ class ChatCommand:
             
             info_parts.append(f"**{i}. {display_name}**")
             if tool_description and tool_description != '도구 설명이 없습니다':
-                info_parts.append(f"   - 설명: {tool_description}")
+                info_parts.append(f"   - description: {tool_description}")
             if param_summary:
-                info_parts.append(f"   - 파라미터: {param_summary}")
+                info_parts.append(f"   - args: {param_summary}")
             
             # 디버그 모드에서만 모델 ID 표시
             if debug_mode:
-                info_parts.append(f"   - 도구 ID: `{tool_id}`")
+                info_parts.append(f"   - id: `{tool_id}`")
         
         tool_info = "\n".join(info_parts)
         tool_panel = Panel(
