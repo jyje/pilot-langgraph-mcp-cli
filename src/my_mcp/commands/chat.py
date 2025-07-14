@@ -218,17 +218,35 @@ class ChatCommand:
         
         if streaming_enabled:
             # AI 응답 스트리밍 생성
-            console.print("🤖 AI: ", end="", style="bold cyan")
-            
             try:
                 response_started = False
+                tool_calls_processed = False
+                
                 async for chunk in self.agent_service.chat_stream(user_input, conversation_state):
-                    if not response_started:
-                        response_started = True
-                    console.print(chunk, end="", style="white")
-                    ai_response += chunk
+                    chunk_type = chunk.get("type", "text")
+                    chunk_data = chunk.get("data", "")
+                    
+                    if chunk_type == "tool_calls" and not tool_calls_processed:
+                        # 도구 호출 정보 처리
+                        tool_calls_processed = True
+                        if chunk_data:  # 도구 호출이 있는 경우
+                            self._display_tool_usage_info(chunk_data)
+                        # AI 응답 시작
+                        console.print("🤖 AI: ", end="", style="bold cyan")
+                        
+                    elif chunk_type == "text":
+                        if not response_started:
+                            response_started = True
+                        console.print(chunk_data, end="", style="white")
+                        ai_response += chunk_data
+                        
+                    elif chunk_type == "error":
+                        console.print(f"\n[red]스트리밍 오류: {chunk_data}[/red]")
+                        ai_response = chunk_data
+                        
                 # 스트리밍 완료 후 줄 나눔 추가
                 console.print("\n")
+                
             except Exception as e:
                 console.print(f"\n[red]스트리밍 오류: {e}[/red]")
                 logger.error(f"스트리밍 오류: {e}")
@@ -242,9 +260,13 @@ class ChatCommand:
             ) as progress:
                 task = progress.add_task("AI가 답변을 생성하는 중...", total=None)
                 
-                # 비동기 호출
-                ai_response = await self.agent_service.chat(user_input, conversation_state)
+                # 비동기 호출 (수정된 반환 타입 처리)
+                ai_response, tool_calls = await self.agent_service.chat(user_input, conversation_state)
                 progress.update(task, completed=100)
+            
+            # 도구 사용 정보 표시
+            if tool_calls:
+                self._display_tool_usage_info(tool_calls)
             
             # AI 응답 표시
             ai_panel = Panel(
@@ -255,4 +277,21 @@ class ChatCommand:
             console.print(ai_panel)
             console.print()
         
-        return ai_response 
+        return ai_response
+    
+    def _display_tool_usage_info(self, tool_calls: list):
+        """도구 사용 정보를 사용자에게 표시합니다."""
+        if not tool_calls:
+            return
+            
+        # 도구 사용 정보 패널 생성
+        tool_info = self.agent_service.get_tool_usage_info(tool_calls)
+        
+        tool_panel = Panel(
+            tool_info,
+            title=f"🛠️ 도구 사용 정보 ({len(tool_calls)}개 도구)",
+            border_style="yellow",
+            padding=(0, 1)
+        )
+        console.print(tool_panel)
+        console.print()  # 구분을 위한 빈 줄 

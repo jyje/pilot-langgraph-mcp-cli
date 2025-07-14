@@ -1,0 +1,43 @@
+# 개발 시 피해야 할 안티패턴들
+
+## 1. 하드코딩된 도구 설명 (절대 금지)
+
+### 잘못된 예시:
+```python
+def _get_tool_description(self, tool_name: str) -> str:
+    tool_descriptions = {
+        "mcp_pilot-fastmcp_special_add": "두 수를 특별한 규칙으로 더합니다",
+        "mcp_pilot-fastmcp_special_sub": "두 수를 특별한 규칙으로 뺍니다",
+        # ... 하드코딩된 설명들
+    }
+    return tool_descriptions.get(tool_name, "도구 설명이 없습니다")
+```
+
+### 문제점:
+- 새로운 도구 추가 시 코드 수정 필요
+- 동적으로 추가되는 도구에 대응 불가
+- 유지보수 어려움
+- 확장성 저하
+
+### 올바른 해결책:
+```python
+def _get_tool_description(self, tool_name: str) -> str:
+    # 도구 자체의 description 속성 사용
+    for tool in self.tools:
+        if tool.name == tool_name:
+            return getattr(tool, 'description', '도구 설명이 없습니다')
+    
+    # MCP 도구의 경우 MCP 클라이언트에서 가져오기
+    mcp_tool_info = mcp_client_manager.get_tool_info()
+    if tool_name in mcp_tool_info:
+        return mcp_tool_info[tool_name].get('description', '도구 설명이 없습니다')
+    
+    return '도구 설명이 없습니다'
+```
+
+## 규칙:
+- **절대로 하드코딩된 설정/정보를 사용하지 마세요**
+- **동적으로 정보를 가져오는 방식을 사용하세요**
+- **확장성을 항상 고려하세요**
+alwaysApply: false
+---

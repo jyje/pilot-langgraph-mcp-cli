@@ -1,7 +1,7 @@
 """
 LangGraph를 사용한 AI 에이전트 서비스
 """
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 from langchain_openai import ChatOpenAI
 from langchain.schema import HumanMessage, AIMessage, SystemMessage
 from langchain_core.messages import ToolMessage
@@ -22,6 +22,7 @@ class AgentState(TypedDict):
     system_prompt: str
     user_input: str
     ai_response: str
+    tool_calls: List[Dict[str, Any]]  # 도구 호출 정보 저장
 
 class AgentService:
     """LangGraph 기반 AI 에이전트 서비스"""
@@ -223,12 +224,61 @@ class AgentService:
             # 응답 내용 추출
             ai_response = response.content if response.content else ""
             
+            # 도구 호출 정보 추출 (다양한 방법으로 시도)
+            tool_calls = []
+            
+            # 방법 1: response.tool_calls 확인
+            if hasattr(response, 'tool_calls') and response.tool_calls:
+                logger.debug(f"tool_calls 속성 발견: {response.tool_calls}")
+                for tool_call in response.tool_calls:
+                    tool_info = {
+                        "id": getattr(tool_call, 'id', str(tool_call.get('id', 'unknown'))),
+                        "name": getattr(tool_call, 'name', tool_call.get('name', 'unknown')),
+                        "args": getattr(tool_call, 'args', tool_call.get('args', {})),
+                        "type": getattr(tool_call, 'type', tool_call.get('type', 'function'))
+                    }
+                    tool_calls.append(tool_info)
+            
+            # 방법 2: additional_kwargs 확인
+            elif hasattr(response, 'additional_kwargs') and response.additional_kwargs:
+                additional_kwargs = response.additional_kwargs
+                logger.debug(f"additional_kwargs 확인: {additional_kwargs}")
+                if 'tool_calls' in additional_kwargs:
+                    for tool_call in additional_kwargs['tool_calls']:
+                        tool_info = {
+                            "id": tool_call.get('id', 'unknown'),
+                            "name": tool_call.get('function', {}).get('name', 'unknown'),
+                            "args": tool_call.get('function', {}).get('arguments', {}),
+                            "type": tool_call.get('type', 'function')
+                        }
+                        tool_calls.append(tool_info)
+            
+            # 방법 3: 메시지 히스토리에서 도구 호출 확인
+            if not tool_calls:
+                # 최근 메시지들을 확인하여 도구 호출 찾기
+                for msg in reversed(messages[-5:]):  # 최근 5개 메시지만 확인
+                    if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                        logger.debug(f"메시지 히스토리에서 도구 호출 발견: {msg.tool_calls}")
+                        for tool_call in msg.tool_calls:
+                            tool_info = {
+                                "id": getattr(tool_call, 'id', str(tool_call.get('id', 'unknown'))),
+                                "name": getattr(tool_call, 'name', tool_call.get('name', 'unknown')),
+                                "args": getattr(tool_call, 'args', tool_call.get('args', {})),
+                                "type": getattr(tool_call, 'type', tool_call.get('type', 'function'))
+                            }
+                            tool_calls.append(tool_info)
+                        break
+            
+            # 디버그 로그 추가
             logger.debug(f"AI 응답 생성: {ai_response[:100]}...")
-            logger.debug(f"도구 호출 여부: {hasattr(response, 'tool_calls') and response.tool_calls}")
+            logger.debug(f"도구 호출 정보 추출 결과: {tool_calls}")
+            logger.debug(f"응답 타입: {type(response)}")
+            logger.debug(f"응답 속성: {dir(response)}")
             
             return {
                 "messages": messages,
-                "ai_response": ai_response
+                "ai_response": ai_response,
+                "tool_calls": tool_calls
             }
         
         except Exception as e:
@@ -237,7 +287,8 @@ class AgentService:
             
             return {
                 "messages": messages + [AIMessage(content=error_message)],
-                "ai_response": error_message
+                "ai_response": error_message,
+                "tool_calls": []
             }
     
     def _should_call_tools(self, state: AgentState) -> str:
@@ -250,6 +301,22 @@ class AgentService:
             # AIMessage에서 tool_calls 확인
             if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
                 logger.debug(f"도구 호출 감지: {last_message.tool_calls}")
+                
+                # 도구 호출 정보를 상태에 저장
+                tool_calls = []
+                for tool_call in last_message.tool_calls:
+                    tool_info = {
+                        "id": getattr(tool_call, 'id', str(tool_call.get('id', 'unknown'))),
+                        "name": getattr(tool_call, 'name', tool_call.get('name', 'unknown')),
+                        "args": getattr(tool_call, 'args', tool_call.get('args', {})),
+                        "type": getattr(tool_call, 'type', tool_call.get('type', 'function'))
+                    }
+                    tool_calls.append(tool_info)
+                
+                # 상태 업데이트
+                state["tool_calls"] = tool_calls
+                logger.debug(f"도구 호출 정보 상태에 저장: {tool_calls}")
+                
                 return "call_tools"
         
         logger.debug("도구 호출 없음, 출력 포맷팅으로 이동")
@@ -258,6 +325,7 @@ class AgentService:
     def _format_output(self, state: AgentState) -> Dict[str, Any]:
         """출력 포맷팅"""
         ai_response = state["ai_response"]
+        tool_calls = state.get("tool_calls", [])
         
         # 마크다운 텍스트 줄 나눔 개선
         formatted_response = self._improve_line_breaks(ai_response)
@@ -265,7 +333,8 @@ class AgentService:
         logger.debug("응답 포맷팅 완료")
         
         return {
-            "ai_response": formatted_response
+            "ai_response": formatted_response,
+            "tool_calls": tool_calls
         }
     
     def _improve_line_breaks(self, text: str) -> str:
@@ -312,7 +381,110 @@ class AgentService:
         
         return result
     
-    async def chat(self, user_input: str, conversation_state: Optional[Dict] = None) -> str:
+    def _format_tool_display_name(self, tool_name: str) -> str:
+        """도구 이름을 사용자에게 친숙하게 표시하기 위해 포맷팅합니다."""
+        display_name = tool_name
+        
+        # MCP 도구의 경우 prefix 제거
+        if tool_name.startswith("mcp_"):
+            display_name = tool_name[4:]  # "mcp_" 제거
+        
+        # 언더스코어를 공백으로 변환하고 제목 형식으로 변환
+        display_name = display_name.replace("_", " ").title()
+        
+        # 일반적인 약어들은 대문자로 유지
+        common_abbreviations = ["Api", "Url", "Id", "Uuid", "Json", "Xml", "Http", "Https"]
+        for abbr in common_abbreviations:
+            display_name = display_name.replace(abbr, abbr.upper())
+        
+        return display_name
+
+    def _format_tool_usage_info(self, tool_calls: List[Dict[str, Any]]) -> str:
+        """도구 사용 정보를 포맷팅합니다."""
+        if not tool_calls:
+            return ""
+        
+        info_parts = []
+        
+        for i, tool_call in enumerate(tool_calls, 1):
+            tool_name = tool_call.get("name", "unknown")
+            tool_args = tool_call.get("args", {})
+            tool_id = tool_call.get("id", "unknown")
+            
+            # 도구 이름을 친숙하게 표시
+            display_name = self._format_tool_display_name(tool_name)
+            
+            # 도구 설명 가져오기
+            tool_description = self._get_tool_description(tool_name)
+            
+            # 파라미터 요약
+            param_summary = self._format_tool_parameters(tool_args)
+            
+            info_parts.append(f"**{i}. {display_name}**")
+            if tool_description and tool_description != '도구 설명이 없습니다':
+                info_parts.append(f"   - 설명: {tool_description}")
+            if param_summary:
+                info_parts.append(f"   - 파라미터: {param_summary}")
+            info_parts.append(f"   - 도구 ID: `{tool_id}`")
+        
+        return "\n".join(info_parts)
+    
+    def _get_tool_description(self, tool_name: str) -> str:
+        """도구 설명을 동적으로 가져옵니다."""
+        # 1. 기본 도구 레지스트리에서 도구 정보 가져오기
+        for tool in self.tools:
+            if getattr(tool, 'name', None) == tool_name:
+                # LangChain 도구의 description 속성 사용
+                description = getattr(tool, 'description', None)
+                if description:
+                    return description
+                
+                # func 속성의 __doc__ 사용
+                if hasattr(tool, 'func') and hasattr(tool.func, '__doc__') and tool.func.__doc__:
+                    return tool.func.__doc__.strip()
+                
+                break
+        
+        # 2. MCP 도구의 경우 MCP 클라이언트에서 도구 정보 가져오기
+        try:
+            mcp_tool_info = mcp_client_manager.get_tool_info()
+            if tool_name in mcp_tool_info:
+                tool_info = mcp_tool_info[tool_name]
+                if isinstance(tool_info, dict):
+                    return tool_info.get('description', '도구 설명이 없습니다')
+                elif hasattr(tool_info, 'description'):
+                    return tool_info.description
+        except Exception as e:
+            logger.debug(f"MCP 도구 정보 가져오기 실패: {e}")
+        
+        # 3. 도구 레지스트리에서 메타데이터 가져오기
+        try:
+            tool_registry_info = self.tool_registry.get_tool_info()
+            for tool_info in tool_registry_info:
+                if tool_info.get('name') == tool_name:
+                    return tool_info.get('description', '도구 설명이 없습니다')
+        except Exception as e:
+            logger.debug(f"도구 레지스트리 정보 가져오기 실패: {e}")
+        
+        # 4. 기본값 반환
+        return '도구 설명이 없습니다'
+    
+    def _format_tool_parameters(self, args: Dict[str, Any]) -> str:
+        """도구 파라미터를 포맷팅합니다."""
+        if not args:
+            return "없음"
+        
+        param_parts = []
+        for key, value in args.items():
+            if isinstance(value, str) and len(value) > 50:
+                # 긴 문자열은 잘라서 표시
+                param_parts.append(f"{key}=\"{value[:50]}...\"")
+            else:
+                param_parts.append(f"{key}={value}")
+        
+        return ", ".join(param_parts)
+
+    async def chat(self, user_input: str, conversation_state: Optional[Dict] = None) -> Tuple[str, List[Dict[str, Any]]]:
         """
         사용자 입력에 대한 AI 에이전트 응답 생성
         
@@ -321,7 +493,7 @@ class AgentService:
             conversation_state: 대화 상태 (선택사항)
             
         Returns:
-            AI 응답
+            AI 응답과 도구 호출 정보의 튜플
         """
         try:
             # 초기 상태 설정
@@ -329,7 +501,8 @@ class AgentService:
                 "messages": conversation_state.get("messages", []) if conversation_state else [],
                 "user_input": user_input,
                 "system_prompt": self.system_prompt,
-                "ai_response": ""
+                "ai_response": "",
+                "tool_calls": []
             }
             
             # 워크플로우 실행
@@ -339,11 +512,11 @@ class AgentService:
             if conversation_state is not None:
                 conversation_state["messages"] = result["messages"]
             
-            return result["ai_response"]
+            return result["ai_response"], result.get("tool_calls", [])
             
         except Exception as e:
             logger.error(f"채팅 처리 실패: {e}")
-            return "죄송합니다. 요청을 처리하는 중에 오류가 발생했습니다."
+            return "죄송합니다. 요청을 처리하는 중에 오류가 발생했습니다.", []
     
     async def chat_stream(self, user_input: str, conversation_state: Optional[Dict] = None):
         """
@@ -354,11 +527,14 @@ class AgentService:
             conversation_state: 대화 상태 (선택사항)
             
         Yields:
-            AI 응답 청크
+            AI 응답 청크 (첫 번째 청크는 도구 호출 정보 포함)
         """
         try:
             # 워크플로우를 통해 응답 생성 (도구 호출 포함)
-            response = await self.chat(user_input, conversation_state)
+            response, tool_calls = await self.chat(user_input, conversation_state)
+            
+            # 첫 번째 청크로 도구 호출 정보 전송
+            yield {"type": "tool_calls", "data": tool_calls}
             
             # 줄 나눔 개선 적용
             formatted_response = self._improve_line_breaks(response)
@@ -375,22 +551,26 @@ class AgentService:
                     tokens = self._smart_split_for_streaming(line)
                     for token_idx, token in enumerate(tokens):
                         if token_idx == 0:
-                            yield token
+                            yield {"type": "text", "data": token}
                         else:
-                            yield " " + token
+                            yield {"type": "text", "data": " " + token}
                 else:
                     # 빈 줄인 경우 빈 줄 출력 (단락 구분)
                     pass
                 
                 # 마지막 줄이 아닌 경우 줄 나눔 추가
                 if line_idx < len(lines) - 1:
-                    yield "\n"
+                    yield {"type": "text", "data": "\n"}
                     
             logger.debug("스트리밍 응답 처리 완료")
             
         except Exception as e:
             logger.error(f"스트리밍 채팅 처리 실패: {e}")
-            yield "죄송합니다. 요청을 처리하는 중에 오류가 발생했습니다."
+            yield {"type": "error", "data": "죄송합니다. 요청을 처리하는 중에 오류가 발생했습니다."}
+
+    def get_tool_usage_info(self, tool_calls: List[Dict[str, Any]]) -> str:
+        """도구 사용 정보를 포맷팅된 문자열로 반환합니다."""
+        return self._format_tool_usage_info(tool_calls)
     
     def get_welcome_message(self) -> str:
         """환영 메시지 반환"""
