@@ -259,14 +259,58 @@ class AgentService:
         """출력 포맷팅"""
         ai_response = state["ai_response"]
         
-        # 필요에 따라 응답 포맷팅 로직 추가
-        formatted_response = ai_response.strip()
+        # 마크다운 텍스트 줄 나눔 개선
+        formatted_response = self._improve_line_breaks(ai_response)
         
         logger.debug("응답 포맷팅 완료")
         
         return {
             "ai_response": formatted_response
         }
+    
+    def _improve_line_breaks(self, text: str) -> str:
+        """마크다운 텍스트의 줄 나눔을 개선합니다."""
+        if not text:
+            return text
+        
+        # 기본 텍스트 정리
+        text = text.strip()
+        
+        # 마크다운 헤더 앞뒤에 빈 줄 추가
+        import re
+        
+        # ###, ##, # 헤더 앞뒤에 빈 줄 추가
+        text = re.sub(r'([^\n])\n(#{1,6}\s)', r'\1\n\n\2', text)
+        text = re.sub(r'(#{1,6}[^\n]*)\n([^\n#])', r'\1\n\n\2', text)
+        
+        # 목록 항목 (-로 시작하는 줄) 앞에 줄 나눔 추가
+        text = re.sub(r'([^\n])\n(-\s\*\*)', r'\1\n\n\2', text)
+        text = re.sub(r'([^\n])\n(-\s)', r'\1\n\2', text)
+        
+        # **굵은 텍스트** 앞뒤에 적절한 공백 추가
+        text = re.sub(r'([^\s])\s*(\*\*[^*]+\*\*)', r'\1 \2', text)
+        text = re.sub(r'(\*\*[^*]+\*\*)\s*([^\s])', r'\1 \2', text)
+        
+        # 연속된 빈 줄을 하나로 통합
+        text = re.sub(r'\n\n\n+', '\n\n', text)
+        
+        return text
+    
+    def _smart_split_for_streaming(self, text: str) -> list:
+        """마크다운 구문을 보호하면서 텍스트를 분할합니다."""
+        import re
+        
+        # 마크다운 구문을 보호하면서 분할
+        # **텍스트**와 같은 패턴은 하나의 토큰으로 유지
+        pattern = r'(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`|[^\s]+)'
+        
+        # 패턴에 따라 토큰들을 분할
+        tokens = re.findall(pattern, text)
+        
+        # 빈 토큰 제거
+        result = [token for token in tokens if token.strip()]
+        
+        return result
     
     async def chat(self, user_input: str, conversation_state: Optional[Dict] = None) -> str:
         """
@@ -316,13 +360,31 @@ class AgentService:
             # 워크플로우를 통해 응답 생성 (도구 호출 포함)
             response = await self.chat(user_input, conversation_state)
             
+            # 줄 나눔 개선 적용
+            formatted_response = self._improve_line_breaks(response)
+            
             # 응답을 청크로 나누어 스트리밍 시뮬레이션
-            words = response.split()
-            for i, word in enumerate(words):
-                if i == 0:
-                    yield word
+            # 마크다운 구문을 고려한 스마트 분할
+            import re
+            
+            # 마크다운 구문을 보호하면서 분할
+            lines = formatted_response.split('\n')
+            for line_idx, line in enumerate(lines):
+                if line.strip():  # 빈 줄이 아닌 경우
+                    # 마크다운 구문(**텍스트**)을 보호하면서 분할
+                    tokens = self._smart_split_for_streaming(line)
+                    for token_idx, token in enumerate(tokens):
+                        if token_idx == 0:
+                            yield token
+                        else:
+                            yield " " + token
                 else:
-                    yield " " + word
+                    # 빈 줄인 경우 빈 줄 출력 (단락 구분)
+                    pass
+                
+                # 마지막 줄이 아닌 경우 줄 나눔 추가
+                if line_idx < len(lines) - 1:
+                    yield "\n"
                     
             logger.debug("스트리밍 응답 처리 완료")
             
