@@ -255,7 +255,7 @@ class ChatCommand:
                     
                     elif chunk_type == "ai_response_ready":
                         # AI 응답 준비 완료 (도구 실행 후)
-                        console.print("[green]✅ 도구 실행 완료[/green]")
+                        logger.debug("✅ 도구 실행 완료")
                         console.print("🤖 AI: ", end="", style="bold cyan")
                         response_started = True
                     
@@ -321,7 +321,7 @@ class ChatCommand:
         if not tool_calls:
             return
             
-        console.print(f"[yellow]🛠️  {len(tool_calls)}개 도구 실행 예정...[/yellow]")
+        console.print(f"[yellow]🛠️  {len(tool_calls)}개 도구 실행...[/yellow]")
         
         for i, tool_call in enumerate(tool_calls, 1):
             tool_name = tool_call.get("name", "unknown")
@@ -336,11 +336,11 @@ class ChatCommand:
             
             console.print(f"[dim]   {i}. {display_name}[/dim]")
             if param_summary and param_summary != "없음":
-                console.print(f"[dim]      파라미터: {param_summary}[/dim]")
+                console.print(f"[dim]      args: {param_summary}[/dim]")
             
             # 디버그 모드에서만 모델 ID 표시
             if debug_mode:
-                console.print(f"[dim]      ID: {tool_id}[/dim]")
+                console.print(f"[dim]      id: {tool_id}[/dim]")
         
         console.print()
     
