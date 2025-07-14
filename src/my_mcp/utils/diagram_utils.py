@@ -120,10 +120,12 @@ def generate_mermaid_diagram(nodes, edges, tools=None, description=None, for_con
         
         mermaid_lines = ["graph TD"]
         
-        # 노드 정의 (__start__와 __end__는 라운드 사각형으로)
+        # 노드 정의 (__start__와 __end__는 라운드 사각형으로, 이스케이프 처리)
         for node in nodes:
             if node in ["__start__", "__end__"]:
-                mermaid_lines.append(f'    {node}(["{node}"])')
+                # __start__와 __end__ 노드는 이스케이프 처리하여 표시
+                escaped_node = node.replace("_", r"\_")
+                mermaid_lines.append(f'    {node}(["{escaped_node}"])')
             else:
                 mermaid_lines.append(f'    {node}["{node}"]')
         
