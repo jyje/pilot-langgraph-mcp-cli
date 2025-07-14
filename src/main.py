@@ -4,6 +4,7 @@ import asyncio
 import typer
 from typing_extensions import Annotated
 from pathlib import Path
+from typing import Optional
 
 # 프로젝트 모듈 import
 from my_mcp.config import check_settings, get_openai_config, get_chatbot_config, get_version, get_mcp_servers
@@ -71,23 +72,22 @@ def main_callback(
 
 @app.command()
 def chat(
-    question: Annotated[str, typer.Argument(help="질문 내용 (제공 시 자동으로 일회성 대화 모드로 실행)")] = None,
+    question: Annotated[Optional[str], typer.Argument(help="질문 내용 (제공 시 자동으로 일회성 대화 모드로 실행)")] = None,
     once: Annotated[bool, typer.Option("--once", help="일회성 대화 모드 (질문 입력 후 바로 종료)")] = False,
     no_stream: Annotated[bool, typer.Option("--no-stream", help="스트리밍 모드 비활성화")] = False,
-    save: Annotated[str, typer.Option("--save", help="대화 내용을 마크다운 파일로 저장 (파일명 지정)")] = None
+    save: Annotated[Optional[str], typer.Option("--save", help="대화 내용을 마크다운 파일로 저장 (파일명 지정)")] = None,
+    debug: Annotated[bool, typer.Option("--debug", help="디버그 모드 활성화 (워크플로우 단계 및 모델 ID 표시)")] = False
 ):
     """
     대화형 챗봇을 시작합니다.
     
+    
     ## 사용법
     
-    * **`my-mcp chat`** → 연속 대화 모드
-    
-    * **`my-mcp chat "질문내용"`** → 일회성 대화 (자동 종료)
-    
-    * **`my-mcp chat --once`** → 일회성 대화 (질문 입력 후 종료)
-    
-    * **`my-mcp chat --once "질문내용"`** → 일회성 대화 (명시적)
+    - my-mcp chat → 연속 대화 모드
+    - my-mcp chat "질문내용" → 일회성 대화 (자동 종료)
+    - my-mcp chat --once → 일회성 대화 (질문 입력 후 종료)
+    - my-mcp chat --once "질문내용" → 일회성 대화 (명시적)
     """
     
     # 설정 파일 확인
@@ -95,24 +95,34 @@ def chat(
         print("설정 파일을 먼저 구성해주세요.")
         return
     
+    # 로깅 설정
+    setup_logging()
+    
     try:
         # 설정 로드
         openai_config = get_openai_config()
         chatbot_config = get_chatbot_config()
         mcp_servers = get_mcp_servers()
         
-        # 채팅 명령어 실행
+        # ChatCommand 인스턴스 생성
         chat_command = ChatCommand(openai_config, chatbot_config, mcp_servers)
         
-        # 일회성 대화 모드 또는 질문이 제공된 경우
-        if once or question:
-            asyncio.run(chat_command.execute_once(question, no_stream, save))
+        # 일회성 대화 모드 결정
+        is_once_mode = once or (question is not None)
+        
+        if is_once_mode:
+            # 일회성 대화 모드
+            asyncio.run(chat_command.execute_once(question, no_stream, save, debug))
         else:
             # 연속 대화 모드
-            asyncio.run(chat_command.execute_continuous(no_stream, save))
-                
+            asyncio.run(chat_command.execute_continuous(no_stream, save, debug))
+        
+    except KeyboardInterrupt:
+        print("\n사용자에 의해 중단되었습니다.")
     except Exception as e:
-        print(f"에이전트 초기화 실패: {e}")
+        print(f"오류가 발생했습니다: {e}")
+        import traceback
+        traceback.print_exc()
 
 
 @app.command()

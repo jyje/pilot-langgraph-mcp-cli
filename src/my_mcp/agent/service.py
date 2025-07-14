@@ -518,55 +518,127 @@ class AgentService:
             logger.error(f"채팅 처리 실패: {e}")
             return "죄송합니다. 요청을 처리하는 중에 오류가 발생했습니다.", []
     
-    async def chat_stream(self, user_input: str, conversation_state: Optional[Dict] = None):
+    async def chat_stream_with_workflow(self, user_input: str, conversation_state: Optional[Dict] = None, debug_mode: bool = False):
+        """
+        워크플로우 단계별 실행과 함께 스트리밍 응답 생성
+        
+        Args:
+            user_input: 사용자 입력
+            conversation_state: 대화 상태 (선택사항)
+            debug_mode: 디버그 모드 (모델 ID 표시 여부)
+            
+        Yields:
+            워크플로우 단계별 정보와 응답 청크
+        """
+        try:
+            # 초기 상태 설정
+            initial_state = {
+                "messages": conversation_state.get("messages", []) if conversation_state else [],
+                "user_input": user_input,
+                "system_prompt": self.system_prompt,
+                "ai_response": "",
+                "tool_calls": []
+            }
+            
+            # 상태 추적 변수
+            tools_displayed = False
+            final_response_started = False
+            
+            # 워크플로우 스트리밍 실행
+            async for chunk in self.app.astream(initial_state):
+                # 각 노드 실행 상태 확인
+                for node_name, node_state in chunk.items():
+                    if node_name == "generate_response":
+                        # AI 응답 생성 시작
+                        if debug_mode:
+                            yield {"type": "workflow_step", "data": {"step": "generate_response", "status": "started"}}
+                        
+                        # 도구 호출 정보 확인 (첫 번째 generate_response에서만)
+                        tool_calls = node_state.get("tool_calls", [])
+                        if tool_calls and not tools_displayed:
+                            # 도구 호출 예정 알림
+                            yield {"type": "tools_pending", "data": {"tool_calls": tool_calls, "debug_mode": debug_mode}}
+                            tools_displayed = True
+                        
+                        # AI 응답이 시작된 경우 (도구 호출 후 두 번째 generate_response)
+                        ai_response = node_state.get("ai_response", "")
+                        if ai_response and not final_response_started:
+                            final_response_started = True
+                            yield {"type": "ai_response_ready", "data": {"response": ai_response}}
+                    
+                    elif node_name == "call_tools":
+                        # 도구 실행 시작
+                        if debug_mode:
+                            yield {"type": "workflow_step", "data": {"step": "call_tools", "status": "started"}}
+                        
+                        # 메시지에서 도구 호출 정보 추출
+                        messages = node_state.get("messages", [])
+                        if messages:
+                            # 도구 호출 메시지 찾기
+                            for msg in reversed(messages):
+                                if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                                    # 개별 도구 실행 상태 표시
+                                    for tool_call in msg.tool_calls:
+                                        tool_name = getattr(tool_call, 'name', tool_call.get('name', 'unknown'))
+                                        yield {"type": "tool_executing", "data": {"tool_name": tool_name}}
+                                    break
+                        
+                        # 도구 실행 완료
+                        if debug_mode:
+                            yield {"type": "workflow_step", "data": {"step": "call_tools", "status": "completed"}}
+                    
+                    elif node_name == "format_output":
+                        # 출력 포맷팅
+                        if debug_mode:
+                            yield {"type": "workflow_step", "data": {"step": "format_output", "status": "started"}}
+                        
+                        # 최종 응답 포맷팅 및 스트리밍
+                        ai_response = node_state.get("ai_response", "")
+                        if ai_response:
+                            # 대화 상태 업데이트
+                            if conversation_state is not None:
+                                conversation_state["messages"] = node_state.get("messages", [])
+                            
+                            # 포맷팅된 응답 스트리밍
+                            formatted_response = self._improve_line_breaks(ai_response)
+                            lines = formatted_response.split('\n')
+                            
+                            for line_idx, line in enumerate(lines):
+                                if line.strip():
+                                    tokens = self._smart_split_for_streaming(line)
+                                    for token_idx, token in enumerate(tokens):
+                                        if token_idx == 0:
+                                            yield {"type": "text", "data": token}
+                                        else:
+                                            yield {"type": "text", "data": " " + token}
+                                if line_idx < len(lines) - 1:
+                                    yield {"type": "text", "data": "\n"}
+                            
+                            # 스트리밍 완료
+                            yield {"type": "streaming_complete", "data": {"final_response": formatted_response}}
+                            return
+            
+            logger.debug("워크플로우 스트리밍 완료")
+            
+        except Exception as e:
+            logger.error(f"워크플로우 스트리밍 실패: {e}")
+            yield {"type": "error", "data": "죄송합니다. 요청을 처리하는 중에 오류가 발생했습니다."}
+
+    async def chat_stream(self, user_input: str, conversation_state: Optional[Dict] = None, debug_mode: bool = False):
         """
         사용자 입력에 대한 AI 에이전트 응답을 스트리밍으로 생성
         
         Args:
             user_input: 사용자 입력
             conversation_state: 대화 상태 (선택사항)
+            debug_mode: 디버그 모드 (모델 ID 표시 여부)
             
         Yields:
-            AI 응답 청크 (첫 번째 청크는 도구 호출 정보 포함)
+            AI 응답 청크 (워크플로우 단계별 정보 포함)
         """
-        try:
-            # 워크플로우를 통해 응답 생성 (도구 호출 포함)
-            response, tool_calls = await self.chat(user_input, conversation_state)
-            
-            # 첫 번째 청크로 도구 호출 정보 전송
-            yield {"type": "tool_calls", "data": tool_calls}
-            
-            # 줄 나눔 개선 적용
-            formatted_response = self._improve_line_breaks(response)
-            
-            # 응답을 청크로 나누어 스트리밍 시뮬레이션
-            # 마크다운 구문을 고려한 스마트 분할
-            import re
-            
-            # 마크다운 구문을 보호하면서 분할
-            lines = formatted_response.split('\n')
-            for line_idx, line in enumerate(lines):
-                if line.strip():  # 빈 줄이 아닌 경우
-                    # 마크다운 구문(**텍스트**)을 보호하면서 분할
-                    tokens = self._smart_split_for_streaming(line)
-                    for token_idx, token in enumerate(tokens):
-                        if token_idx == 0:
-                            yield {"type": "text", "data": token}
-                        else:
-                            yield {"type": "text", "data": " " + token}
-                else:
-                    # 빈 줄인 경우 빈 줄 출력 (단락 구분)
-                    pass
-                
-                # 마지막 줄이 아닌 경우 줄 나눔 추가
-                if line_idx < len(lines) - 1:
-                    yield {"type": "text", "data": "\n"}
-                    
-            logger.debug("스트리밍 응답 처리 완료")
-            
-        except Exception as e:
-            logger.error(f"스트리밍 채팅 처리 실패: {e}")
-            yield {"type": "error", "data": "죄송합니다. 요청을 처리하는 중에 오류가 발생했습니다."}
+        # 새로운 워크플로우 스트리밍 방식 사용
+        async for chunk in self.chat_stream_with_workflow(user_input, conversation_state, debug_mode):
+            yield chunk
 
     def get_tool_usage_info(self, tool_calls: List[Dict[str, Any]]) -> str:
         """도구 사용 정보를 포맷팅된 문자열로 반환합니다."""
